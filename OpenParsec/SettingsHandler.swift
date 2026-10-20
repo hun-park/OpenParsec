@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 final class SettingsStore: ObservableObject {
 	static let shared = SettingsStore()
@@ -9,6 +10,7 @@ final class SettingsStore: ObservableObject {
 		defaults.register(defaults: [
 			"rendererChoice": RendererType.metal.rawValue,
 			"resolution": ParsecResolution.client.rawValue,
+			"protectDisplayEdges": UIDevice.current.userInterfaceIdiom == .phone,
 			"bitrate": 0,
 			"decoder": DecoderPref.h264.rawValue,
 			"cursorMode": CursorMode.touchpad.rawValue,
@@ -32,6 +34,14 @@ final class SettingsStore: ObservableObject {
 			"savedZoomEnabled": false,
 			"savedConstantFps": false
 		])
+		// Apply the requested phone profile once, including on an in-place upgrade.
+		// Later manual resolution/zoom choices remain persistent.
+		if UIDevice.current.userInterfaceIdiom == .phone,
+		   !defaults.bool(forKey: "phoneDisplayProfileV1") {
+			defaults.set(ParsecResolution.client.rawValue, forKey: "resolution")
+			defaults.set(false, forKey: "savedZoomEnabled")
+			defaults.set(true, forKey: "phoneDisplayProfileV1")
+		}
 		// values saved back when saving was off would now always apply
 		if defaults.object(forKey: "saveSessionSettings") as? Bool == false {
 			defaults.set(false, forKey: "savedZoomEnabled")
@@ -58,6 +68,11 @@ final class SettingsStore: ObservableObject {
 	var bitrate: Int {
 		get { defaults.integer(forKey: "bitrate") }
 		set { store(newValue, "bitrate") }
+	}
+
+	var protectDisplayEdges: Bool {
+		get { defaults.bool(forKey: "protectDisplayEdges") }
+		set { store(newValue, "protectDisplayEdges") }
 	}
 
 	var decoder: DecoderPref {

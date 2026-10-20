@@ -3,6 +3,7 @@ import SwiftUI
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 	var window: UIWindow?
+	private var requestedInitialLandscape = false
 
 	func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
 		if connectionOptions.shortcutItem?.type == ParsecBackgroundManager.reconnectShortcut {
@@ -16,6 +17,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 		    window.rootViewController = UIHostingController(rootView: contentView)
 		    self.window = window
 		    window.makeKeyAndVisible()
+		    ParsecResolution.updateClientResolution(for: window)
 		}
 	}
 
@@ -38,6 +40,16 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 	private var pendingUnpause: DispatchWorkItem?
 
 	func sceneDidBecomeActive(_ scene: UIScene) {
+		if !requestedInitialLandscape, let windowScene = scene as? UIWindowScene,
+		   windowScene.traitCollection.userInterfaceIdiom == .phone {
+			requestedInitialLandscape = true
+			// A single request, not an orientation lock. Resuming never forces rotation.
+			if #available(iOS 16.0, *) {
+				windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { error in
+					appNote("[display] initial landscape request: \(error.localizedDescription)")
+				}
+			}
+		}
 		if #available(iOS 15.0, *) {
 			PictureInPictureManager.shared.stopPiP()
 			if PictureInPictureManager.shared.stopFramePump() {

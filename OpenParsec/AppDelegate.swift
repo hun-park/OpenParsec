@@ -3,6 +3,11 @@ import AVFoundation
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
+	func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+		// The plist selects the launch orientation; normal rotation is allowed afterwards.
+		return window?.windowScene?.traitCollection.userInterfaceIdiom == .pad ? .all : .allButUpsideDown
+	}
+
 	func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
 		// Override point for customization after application launch.
 		signal(SIGPIPE, SIG_IGN)

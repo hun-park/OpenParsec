@@ -103,6 +103,9 @@ enum ParsecResolution: String, CaseIterable, Hashable {
 	}
 
 	var desc: String {
+		if self == .client {
+			return "Auto (Device \(width)×\(height))"
+		}
 		return rawValue
 	}
 
@@ -113,7 +116,23 @@ enum ParsecResolution: String, CaseIterable, Hashable {
 	static var bitrates = [3, 5, 7, 10, 15, 20, 25, 30, 35, 40, 45, 50]
 
 	static func updateClientResolution(width: Int, height: Int) {
-		clientSize = (width, height)
+		guard width > 0, height > 0 else { return }
+		// Video encoders expect even dimensions.
+		clientSize = (max(2, width / 2 * 2), max(2, height / 2 * 2))
+	}
+
+	static func updateClientResolution(for window: UIWindow) {
+		if window.windowScene?.traitCollection.userInterfaceIdiom == .phone {
+			// Native pixels, independent of Display Zoom, safe-area insets and launch timing.
+			// Keep the PC desktop landscape when the phone is rotated during a session.
+			let pixels = window.screen.nativeBounds.size
+			updateClientResolution(width: Int(max(pixels.width, pixels.height)),
+			                       height: Int(min(pixels.width, pixels.height)))
+		} else {
+			let scale = window.screen.nativeScale
+			updateClientResolution(width: Int(window.bounds.width * scale),
+			                       height: Int(window.bounds.height * scale))
+		}
 	}
 }
 

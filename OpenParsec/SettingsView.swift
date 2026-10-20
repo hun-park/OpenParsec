@@ -8,6 +8,10 @@ struct SettingsView: View {
 
 	init(visible: Binding<Bool>) {
 		_visible = visible
+		if let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+			.flatMap({ $0.windows }).first(where: { $0.isKeyWindow }) {
+			ParsecResolution.updateClientResolution(for: window)
+		}
 		var tmp: [Choice<ParsecResolution>] = []
 		for res in ParsecResolution.resolutions {
 			tmp.append(Choice(res.desc, res))
@@ -103,6 +107,10 @@ struct SettingsView: View {
 							}
 							CatItem("Resolution") {
 								MultiPicker(selection: $settings.resolution, options: resolutionChoices)
+							}
+							CatItem("Avoid Camera / Home Indicator") {
+								Toggle("", isOn: $settings.protectDisplayEdges)
+									.frame(width: 80)
 							}
 							CatItem("Bitrate") {
 								MultiPicker(selection: $settings.bitrate, options: [Choice("Host Default", 0)] + ParsecResolution.bitrates.map { Choice("\($0) Mbps", $0) })

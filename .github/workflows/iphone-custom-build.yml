@@ -1,0 +1,43 @@
+name: Build iPhone display customization
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
+      - name: Build unsigned IPA for Sideloadly
+        shell: bash
+        run: |
+          set -o pipefail
+          bash build-iphone.sh 2>&1 | tee build-iphone.log
+      - name: Verify IPA contents
+        run: python3 verify-ipa.py build/OpenParsec-iPhone.ipa
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenParsec-iPhone
+          path: build/OpenParsec-iPhone.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone-build-log
+          path: build-iphone.log
+          if-no-files-found: ignore
+          retention-days: 7

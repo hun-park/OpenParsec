@@ -41,7 +41,6 @@ struct ParsecStatusBar: View {
 			.foregroundColor(Color("Foreground"))
 			.frame(maxHeight: .infinity, alignment: .top)
 			.zIndex(1)
-			.edgesIgnoringSafeArea(.all)
 
 		}
 		EmptyView()
@@ -306,7 +305,6 @@ struct ParsecView: View {
 								.opacity(showMenu ? 1 : 0.25)
 						}
 						.padding()
-						.edgesIgnoringSafeArea(.all)
 						Spacer()
 					}
 				}
@@ -323,7 +321,6 @@ struct ParsecView: View {
 								.cornerRadius(8)
 						}
 						.padding(.leading)
-						.edgesIgnoringSafeArea(.all)
 						Spacer()
 					}
 				}
@@ -474,7 +471,7 @@ struct ParsecView: View {
 			}
 			disconnect(isBackgroundDisconnect: true)
 		}
-		.edgesIgnoringSafeArea(.all)
+		.edgesIgnoringSafeArea(settingsStore.protectDisplayEdges ? [] : .all)
 
 	}
 
@@ -523,9 +520,9 @@ struct ParsecView: View {
 
 		DataManager.model.constantFps = SettingsHandler.constantFps
 
-		let screenSize: CGSize = self.parsecViewController.view.frame.size
-		let scaleFactor = UIScreen.main.nativeScale
-		ParsecResolution.updateClientResolution(width: Int(screenSize.width * scaleFactor), height: Int(screenSize.height * scaleFactor))
+		if let window = self.parsecViewController.view.window {
+			ParsecResolution.updateClientResolution(for: window)
+		}
 
 		ParsecView.getHostUserData()
 

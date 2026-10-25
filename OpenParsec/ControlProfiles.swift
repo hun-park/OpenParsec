@@ -154,15 +154,15 @@ struct WindowsHardwareKeyState {
 	mutating func transition(raw: UInt32, pressed: Bool, capsToHangul: Bool, controlSpaceToHangul: Bool = false) -> [HardwareKeyPacket] {
 		if pressed {
 			guard held[raw] == nil, let code = Self.mappedCode(raw, capsToHangul: capsToHangul) else { return [] }
-			let controls = held.keys.filter { $0 == 224 || $0 == 228 }.sorted()
-			if raw == 44, controlSpaceToHangul, !controls.isEmpty,
-			   held.keys.allSatisfy({ $0 == 224 || $0 == 228 }) {
+			let controls = held.keys.filter { ($0 == 224 || $0 == 228) && held[$0] == $0 }.sorted()
+			if raw == 44, controlSpaceToHangul, controlSpaceReady {
 				// Consume Space until key-up. Pulse Hangul with Ctrl released on the
-				// host, then restore physically held Ctrl keys in deterministic order.
+				// host. Consume delayed Ctrl releases instead of re-holding Ctrl over
+				// the next typed letter (some Bluetooth keyboards delay modifier-up).
 				held[raw] = 0
+				for control in controls { held[control] = 0 }
 				return controls.map { .init(code: $0, pressed: false) }
 					+ [.init(code: 144, pressed: true), .init(code: 144, pressed: false)]
-					+ controls.map { .init(code: $0, pressed: true) }
 			}
 			held[raw] = code
 			// A dedicated LANG1 and remapped Caps Lock can share one host key.
@@ -186,8 +186,82 @@ struct WindowsHardwareKeyState {
 		}
 		return output
 	}
+	var controlAltOnly: Bool {
+		let modifiers = held.filter { (224...231).contains($0.key) && $0.value != 0 }.map(\.key)
+		return modifiers.contains(where: { $0 == 224 || $0 == 228 })
+			&& modifiers.contains(where: { $0 == 226 || $0 == 230 })
+			&& modifiers.allSatisfy { [224, 228, 226, 230].contains($0) }
+	}
+	var controlSpaceReady: Bool {
+		held.contains(where: { ($0.key == 224 || $0.key == 228) && $0.value != 0 })
+			&& held.keys.allSatisfy { $0 == 224 || $0 == 228 }
+	}
+	var altOnly: Bool {
+		let modifiers = held.filter { (224...231).contains($0.key) && $0.value != 0 }.map(\.key)
+		return !modifiers.isEmpty && modifiers.allSatisfy { $0 == 226 || $0 == 230 }
+	}
+	mutating func consumeShortcut(raw: UInt32) -> [HardwareKeyPacket] {
+		var releases: [HardwareKeyPacket] = []
+		if let key = held[raw], key != 0 { releases.append(.init(code: key, pressed: false)) }
+		let modifiers = held.filter { (224...231).contains($0.key) && $0.value != 0 }.map(\.key).sorted()
+		for modifier in modifiers { held[modifier] = 0 }
+		held[raw] = 0
+		return releases + modifiers.map { .init(code: $0, pressed: false) }
+	}
 	mutating func reset() { held.removeAll() }
 	static func repeats(_ code: UInt32) -> Bool { code < 224 && code != 57 && code != 144 && code != 145 }
+}
+
+enum HardwareKeySource: Hashable { case gameController, uiKit }
+
+enum HardwareShortcut: Hashable { case altTab, hangul, nextDisplay }
+enum HardwareShortcutSource: Hashable { case raw, command }
+struct HardwareShortcutGate {
+	private var last: [HardwareShortcut: [HardwareShortcutSource: TimeInterval]] = [:]
+	mutating func allow(_ shortcut: HardwareShortcut, source: HardwareShortcutSource, at now: TimeInterval) -> Bool {
+		let other: HardwareShortcutSource = source == .raw ? .command : .raw
+		if let time = last[shortcut]?[other], now >= time, now - time <= 0.08 { return false }
+		last[shortcut, default: [:]][source] = now
+		return true
+	}
+	mutating func reset() { last.removeAll() }
+}
+
+// Availability of GCKeyboard is not evidence of key delivery. Accept the first
+// actual source per press and deduplicate mirrored events from the other source.
+struct HardwareInputMux {
+	private var owners: [UInt32: HardwareKeySource] = [:]
+	private var pendingUps: [UInt32: Set<HardwareKeySource>] = [:]
+	private var staleUps: [UInt32: Set<HardwareKeySource>] = [:]
+	private var completed: [UInt32: (source: HardwareKeySource, time: TimeInterval)] = [:]
+	private var suppressed: [UInt32: Set<HardwareKeySource>] = [:]
+	mutating func accept(code: UInt32, pressed: Bool, source: HardwareKeySource, at now: TimeInterval) -> Bool {
+		if pressed {
+			if suppressed[code]?.contains(source) == true { return false }
+			staleUps[code]?.remove(source)
+			if owners[code] != nil {
+				pendingUps[code, default: []].insert(source)
+				return false
+			}
+			if let last = completed[code], last.source != source, now >= last.time, now - last.time <= 0.03 {
+				suppressed[code, default: []].insert(source)
+				return false
+			}
+			owners[code] = source
+			pendingUps[code] = [source]
+			return true
+		}
+		if suppressed[code]?.remove(source) != nil { return false }
+		if staleUps[code]?.remove(source) != nil { return false }
+		guard let owner = owners.removeValue(forKey: code) else { return false }
+		let remaining = (pendingUps.removeValue(forKey: code) ?? []).subtracting([source])
+		staleUps[code, default: []].formUnion(remaining)
+		completed[code] = (owner, now)
+		return true
+	}
+	mutating func reset() {
+		owners.removeAll(); pendingUps.removeAll(); staleUps.removeAll(); completed.removeAll(); suppressed.removeAll()
+	}
 }
 
 enum DisplayCycle {

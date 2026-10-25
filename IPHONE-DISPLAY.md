@@ -199,3 +199,52 @@ unknown/removed displays, rapid taps and reconnect on the actual Windows host.
 
 CI covers mapping/state transitions and display cycling, not the pictured
 keyboard, iPadOS routing or multi-monitor streaming on the device.
+
+### Hardware delivery repair (build 20261026.1)
+
+The device report confirmed screen Alt/Tab, screen Hangul and screen monitor
+cycling work, while hardware shortcuts do not. Keep the working host protocols
+and screen behavior. The previous mode incorrectly discarded UIKit events when
+GCKeyboard merely exposed a button, even without a matching delivered callback.
+It also suspended hardware input whenever the left menu was open.
+
+Both physical event paths now feed a shared per-key mux. The first real down is
+forwarded once; mirrored downs/ups are deduplicated. Late duplicate ups cannot
+release a subsequent fast press, and a 30ms cross-source completed-tap window
+filters delayed mirrors without delaying primary input. Remapped Caps/LANG1
+aliases are canonicalized before this mux. UIKit modifier flags and observed GC
+modifier state are reconciled even when a GC object exists; batched modifier
+downs precede letters. Left-menu visibility no longer suspends hardware keys;
+editing, errors, reconnects and host blocking still do.
+
+Option+Tab and Control+Space also have UIKeyCommand fallbacks with system
+priority requested on iOS 15+. Native/command paths share a shortcut gate to
+avoid double switching. Consumed Control from a language macro remains released
+until physical up/cleared flags, preventing delayed Bluetooth modifier-ups from
+affecting subsequent typing. The screen Hangul path remains LANG1 because the
+user confirmed it works; no Windows keyboard layout was changed.
+
+Windows mode now binds Control+Option+M (Windows Ctrl+Alt+M) to the existing
+next-display action. This hardware shortcut did not exist in the prior build.
+It consumes the chord so no M is typed into the PC. The screen display button
+continues to use the existing working output-switch protocol.
+
+The left menu's `키 입력 진단` shows GC/UIKit event counts, outgoing request
+counts, blocked counts and the latest numeric HID usage/command. It records no
+text history or persistent log; updates are throttled. These are client events
+and send requests, not host acknowledgments. It can stay open during keyboard
+testing. Zero input counts distinguish missing app delivery from downstream
+input handling; nonzero blocked counts show application-side suspension.
+
+New regression checks cover silent-GC/UIKit fallback, mirrored event ordering,
+fast repeats/late ups, source failover, stale Control after language switching,
+full Alt+Tab packets, and native/command shortcut deduplication. Device acceptance
+must still check this user's iPad/keyboard: Option+Tab, Caps, Control+Space,
+immediate typing after Hangul, Ctrl+C/V, Control+Option+M, and mode on/off with
+the menu open and closed. App system-priority requests cannot guarantee delivery
+of every OS-reserved shortcut.
+
+Related primary-source report on delayed Bluetooth language modifiers:
+https://github.com/hugeBlack/OpenParsec/pull/102 . This repair's dual-source mux
+and diagnostics are specific to this fork; that report does not validate this
+user's hardware or our IPA.

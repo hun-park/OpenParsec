@@ -4,6 +4,7 @@ import ParsecSDK
 import QuartzCore
 import os
 import GameController
+import Combine
 
 protocol ParsecPlayground {
 	init(viewController: UIViewController, updateImage: @escaping () -> Void)
@@ -420,6 +421,9 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	private var optCmdRemapActive = false
 	private var altKeyHeld = false
 	private var windowsKeyState = WindowsHardwareKeyState()
+	private var hardwareInputMux = HardwareInputMux()
+	private var hardwareShortcutGate = HardwareShortcutGate()
+	var onCycleDisplay: (() -> Void)?
 	private var physicalKeyboard: GCKeyboard?
 	private var hardwareStreamVisible = false
 	private lazy var hardwareOnlyInputView = UIView(frame: .zero)
@@ -451,12 +455,15 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 			physicalKeyboard?.handlerQueue = .main
 			physicalKeyboard?.keyboardInput?.keyChangedHandler = { [weak self] _, _, code, pressed in
 				MainActor.assumeIsolated {
-					guard let self = self, self.canForwardHardwareKeys else { return }
-					self.forwardHardwareKey(UInt32(clamping: code.rawValue), pressed: pressed)
+					guard let self = self else { return }
+					self.receiveHardwareKey(UInt32(clamping: code.rawValue), pressed: pressed, source: .gameController)
 				}
 			}
-			reloadInputViews()
-			becomeFirstResponder()
+			DispatchQueue.main.async { [weak self] in
+				guard let self = self, self.hardwareStreamVisible, SettingsHandler.windowsHardwareKeyboard else { return }
+				self.reloadInputViews()
+				self.becomeFirstResponder()
+			}
 		} else {
 			reloadInputViews()
 			if !keyboardVisible { resignFirstResponder() }
@@ -464,35 +471,109 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	}
 
 	private func sendHardwarePackets(_ packets: [HardwareKeyPacket]) {
+		HardwareKeyboardDiagnostics.shared.forwarded(packets.count)
 		for packet in packets { CParsec.sendKeyboardMessage(keyCode: packet.code, pressed: packet.pressed) }
 	}
+	override var keyCommands: [UIKeyCommand]? {
+		guard SettingsHandler.windowsHardwareKeyboard else { return super.keyCommands }
+		var commands = [UIKeyCommand(input: "\t", modifierFlags: .alternate, action: #selector(windowsAltTabCommand)),
+			UIKeyCommand(input: "m", modifierFlags: [.control, .alternate], action: #selector(nextDisplayCommand))]
+		if SettingsHandler.hardwareControlSpaceToHangul {
+			commands.append(UIKeyCommand(input: " ", modifierFlags: .control, action: #selector(windowsHangulCommand)))
+		}
+		for command in commands {
+			if #available(iOS 15.0, *) { command.wantsPriorityOverSystemBehavior = true }
+		}
+		return commands
+	}
+	@objc private func windowsAltTabCommand() {
+		guard canForwardHardwareKeys else { return }
+		let newTap = hardwareShortcutGate.allow(.altTab, source: .command, at: ProcessInfo.processInfo.systemUptime)
+		HardwareKeyboardDiagnostics.shared.command("Option+Tab")
+		sendHardwarePackets(windowsKeyState.consumeShortcut(raw: 43))
+		stopKeyRepeat()
+		guard newTap else { return }
+		sendHardwarePackets([.init(code: 226, pressed: true), .init(code: 43, pressed: true),
+			.init(code: 43, pressed: false), .init(code: 226, pressed: false)])
+	}
+	@objc private func windowsHangulCommand() {
+		guard canForwardHardwareKeys, SettingsHandler.hardwareControlSpaceToHangul,
+		      hardwareShortcutGate.allow(.hangul, source: .command, at: ProcessInfo.processInfo.systemUptime) else { return }
+		HardwareKeyboardDiagnostics.shared.command("Control+Space")
+		sendHardwarePackets(windowsKeyState.reconcileModifiers([224]))
+		sendHardwarePackets(windowsKeyState.consumeShortcut(raw: 44))
+		stopKeyRepeat()
+		sendHardwarePackets([.init(code: 144, pressed: true), .init(code: 144, pressed: false)])
+	}
+	@objc private func nextDisplayCommand() {
+		guard canForwardHardwareKeys,
+		      hardwareShortcutGate.allow(.nextDisplay, source: .command, at: ProcessInfo.processInfo.systemUptime) else { return }
+		HardwareKeyboardDiagnostics.shared.command("Control+Option+M")
+		sendHardwarePackets(windowsKeyState.consumeShortcut(raw: 16))
+		stopKeyRepeat()
+		onCycleDisplay?()
+	}
+	private func receiveHardwareKey(_ raw: UInt32, pressed: Bool, source: HardwareKeySource) {
+		let allowed = canForwardHardwareKeys
+		HardwareKeyboardDiagnostics.shared.received(source: source, code: raw, pressed: pressed, allowed: allowed)
+		guard allowed, let routed = WindowsHardwareKeyState.mappedCode(raw, capsToHangul: SettingsHandler.hardwareCapsToHangul),
+		      hardwareInputMux.accept(code: routed, pressed: pressed, source: source, at: ProcessInfo.processInfo.systemUptime) else { return }
+		forwardHardwareKey(routed, pressed: pressed)
+	}
 	private func forwardHardwareKey(_ raw: UInt32, pressed: Bool) {
+		let now = ProcessInfo.processInfo.systemUptime
+		let altTab = pressed && raw == 43 && windowsKeyState.altOnly
+		if altTab && !hardwareShortcutGate.allow(.altTab, source: .raw, at: now) {
+			sendHardwarePackets(windowsKeyState.consumeShortcut(raw: raw)); stopKeyRepeat(); return
+		}
+		if pressed, raw == 16, windowsKeyState.controlAltOnly, windowsKeyState.held[raw] == nil {
+			sendHardwarePackets(windowsKeyState.consumeShortcut(raw: raw))
+			stopKeyRepeat()
+			if hardwareShortcutGate.allow(.nextDisplay, source: .raw, at: now) { onCycleDisplay?() }
+			return
+		}
+		let controlSpace = pressed && raw == 44 && SettingsHandler.hardwareControlSpaceToHangul && windowsKeyState.controlSpaceReady
+		if controlSpace && !hardwareShortcutGate.allow(.hangul, source: .raw, at: now) {
+			sendHardwarePackets(windowsKeyState.consumeShortcut(raw: raw)); stopKeyRepeat(); return
+		}
 		let oldCode = windowsKeyState.held[raw]
 		let packets = windowsKeyState.transition(raw: raw, pressed: pressed, capsToHangul: SettingsHandler.hardwareCapsToHangul,
 			controlSpaceToHangul: SettingsHandler.hardwareControlSpaceToHangul)
 		sendHardwarePackets(packets)
-		if pressed, let packet = packets.first, packet.pressed, WindowsHardwareKeyState.repeats(packet.code) {
+		if pressed, !altTab, let packet = packets.first, packet.pressed, WindowsHardwareKeyState.repeats(packet.code) {
 			startKeyRepeat(keyCode: Int(packet.code))
 		} else if !pressed, let oldCode = oldCode, Int(oldCode) == repeatKeyCode { stopKeyRepeat() }
 	}
 
 	private func handleWindowsPresses(_ presses: Set<UIPress>, pressed: Bool) {
-		guard canForwardHardwareKeys else { return }
-		for press in presses {
-			guard let key = press.key else { continue }
+		// Modifier downs must precede letters when UIKit batches an entire chord.
+		let keys = presses.compactMap(\.key).sorted {
+			let left = isModifierKey($0.keyCode), right = isModifierKey($1.keyCode)
+			return left != right ? left : $0.keyCode.rawValue < $1.keyCode.rawValue
+		}
+		for key in keys {
 			let raw = UInt32(key.keyCode.rawValue)
-			// GC owns supported physical usages, UIKit handles only absent devices or
-			// unsupported usages. Never send the same physical event down both paths.
-			if physicalKeyboard?.keyboardInput?.button(forKeyCode: GCKeyCode(rawValue: Int(raw))) != nil { continue }
-			if physicalKeyboard == nil, !(224...231).contains(raw) {
+			let allowed = canForwardHardwareKeys
+			HardwareKeyboardDiagnostics.shared.received(source: .uiKit, code: raw, pressed: pressed, allowed: allowed)
+			guard allowed else { continue }
+			if !(224...231).contains(raw) {
 				var modifiers = Set<UInt32>()
 				if key.modifierFlags.contains(.control) { modifiers.insert(224) }
 				if key.modifierFlags.contains(.shift) { modifiers.insert(225) }
 				if key.modifierFlags.contains(.alternate) { modifiers.insert(226) }
 				if key.modifierFlags.contains(.command) { modifiers.insert(227) }
+				// Some devices deliver letters through UIKit but modifiers only as GC
+				// state. Merge observed button state, never infer delivery from presence.
+				for left in [UInt32(224), 225, 226, 227] {
+					if [left, left + 4].contains(where: {
+						physicalKeyboard?.keyboardInput?.button(forKeyCode: GCKeyCode(rawValue: Int($0)))?.isPressed == true
+					}) { modifiers.insert(left) }
+				}
 				sendHardwarePackets(windowsKeyState.reconcileModifiers(modifiers))
 			}
-			forwardHardwareKey(raw, pressed: pressed)
+			guard let routed = WindowsHardwareKeyState.mappedCode(raw, capsToHangul: SettingsHandler.hardwareCapsToHangul),
+			      hardwareInputMux.accept(code: routed, pressed: pressed, source: .uiKit, at: ProcessInfo.processInfo.systemUptime) else { continue }
+			forwardHardwareKey(routed, pressed: pressed)
 		}
 	}
 
@@ -599,6 +680,8 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	func resetKeyState() {
 		stopKeyRepeat()
 		windowsKeyState.reset()
+		hardwareInputMux.reset()
+		hardwareShortcutGate.reset()
 		optCmdRemapActive = false
 		altKeyHeld = false
 	}
@@ -1688,6 +1771,46 @@ class TouchOverlayView: UIView {
 	override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { forward(event, moved: true) }
 	override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { forward(event, moved: false) }
 	override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { forward(event, moved: false) }
+}
+
+final class HardwareKeyboardDiagnostics: ObservableObject {
+	static let shared = HardwareKeyboardDiagnostics()
+	@Published var enabled = false {
+		didSet { gcCount = 0; uiCount = 0; outgoing = 0; blocked = 0; detail = "키를 눌러 주세요"; refresh() }
+	}
+	@Published private(set) var summary = "키를 눌러 주세요"
+	private var gcCount = 0, uiCount = 0, outgoing = 0, blocked = 0
+	private var detail = "키를 눌러 주세요"
+	private var updatePending = false
+	func received(source: HardwareKeySource, code: UInt32, pressed: Bool, allowed: Bool) {
+		guard enabled else { return }
+		if source == .gameController { gcCount += 1 } else { uiCount += 1 }
+		if !allowed { blocked += 1 }
+		detail = "\(source == .gameController ? "GC" : "UIKit") HID \(code) \(pressed ? "↓" : "↑")\(allowed ? "" : " · 입력 일시 중지")"
+		scheduleRefresh()
+	}
+	func forwarded(_ count: Int) {
+		guard enabled, count > 0 else { return }
+		outgoing += count
+		scheduleRefresh()
+	}
+	func command(_ name: String) {
+		guard enabled else { return }
+		detail = "앱 단축키: \(name)"
+		scheduleRefresh()
+	}
+	private func scheduleRefresh() {
+		guard !updatePending else { return }
+		updatePending = true
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+			guard let self = self else { return }
+			self.updatePending = false
+			self.refresh()
+		}
+	}
+	private func refresh() {
+		summary = enabled ? "수신 GC \(gcCount) / UIKit \(uiCount)\n전송 요청 \(outgoing) · 차단 \(blocked)\n\(detail)" : ""
+	}
 }
 
 final class AccessoryContainerView: UIView {

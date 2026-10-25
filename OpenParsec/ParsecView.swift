@@ -51,13 +51,15 @@ struct ParsecStatusBar: View {
 			.onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
 				didEnterBackground = true
 			}
+			.onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+				ParsecBackgroundManager.shared.recovery.noteFailure()
+			}
 			.onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
 				guard didEnterBackground else { return }
 				didEnterBackground = false
 				guard SettingsHandler.autoReconnect, !showDCAlert else { return }
-				// A fresh retry budget for this foreground return. Poll owns all SDK
-				// reconnect calls, so notification + timer cannot start two attempts.
-				ParsecBackgroundManager.shared.reconnectAttempts = 0
+				// Keep this outage's budget across rapid app switching. Only five
+				// healthy foreground seconds replenish it; poll owns SDK retries.
 				ParsecBackgroundManager.shared.resumedAt = Date()
 			}
 	}
@@ -75,7 +77,8 @@ struct ParsecStatusBar: View {
 			pipActive = PictureInPictureManager.shared.isPiPActive
 		}
 
-		if status == PARSEC_OK && pcs.networkFailure && !isReconnecting && !pipActive {
+		if status == PARSEC_OK && pcs.networkFailure && !pipActive {
+			ParsecBackgroundManager.shared.recovery.noteFailure()
 			if networkFailureSince == nil { networkFailureSince = Date() }
 			let lost = Date().timeIntervalSince(networkFailureSince!)
 			let justResumed = Date().timeIntervalSince(ParsecBackgroundManager.shared.resumedAt ?? .distantPast) < 10
@@ -86,6 +89,8 @@ struct ParsecStatusBar: View {
 				ParsecBackgroundManager.shared.resumedAt = nil
 				status = NETWORK_ERR_INTERRUPTED
 				appNote("[stream] network failure held, treating it as a lost connection")
+			} else {
+				return
 			}
 		} else {
 			networkFailureSince = nil
@@ -93,6 +98,7 @@ struct ParsecStatusBar: View {
 		}
 
 		if status != PARSEC_OK {
+			ParsecBackgroundManager.shared.recovery.noteFailure()
 			if ParsecBackgroundManager.shared.isMarkedForReconnect {
 				return
 			}
@@ -136,7 +142,6 @@ struct ParsecStatusBar: View {
 					CParsec.reconnect(peerId)
 					return
 				}
-				mgr.reconnectAttempts = 0
 			}
 
 			isReconnecting = false
@@ -153,8 +158,12 @@ struct ParsecStatusBar: View {
 			return
 		}
 
-		if isReconnecting {
-			ParsecBackgroundManager.shared.reconnectAttempts = 0
+		if !pcs.networkFailure {
+			ParsecBackgroundManager.shared.recovery.noteHealthy(at: ProcessInfo.processInfo.systemUptime)
+		} else {
+			ParsecBackgroundManager.shared.recovery.noteFailure()
+		}
+		if isReconnecting && !pcs.networkFailure {
 			isReconnecting = false
 			appNote("[reconnect] live again")
 			ParsecView.getHostUserData()
@@ -223,6 +232,7 @@ struct ParsecView: View {
     // Observer shared state for updates
     @ObservedObject var dataModel = DataManager.model
 	@ObservedObject var settingsStore = SettingsStore.shared
+	@ObservedObject private var quickControls = QuickControlSettings.shared
 
     // Computed property for convenience refactoring
     var parsecViewController: ParsecViewController {
@@ -261,6 +271,9 @@ struct ParsecView: View {
 
 			if !editingQuickKeys {
 				HStack(spacing: 8) {
+					Button(quickControls.active.title, action: switchControlProfile)
+						.accessibilityLabel("현재 \(quickControls.active.title) 프로필, 눌러 전환")
+						.disabled(isReconnecting || connectionLost || showDCAlert)
 					Button(action: toggleStreamPreset) {
 						Label(presetTitle, systemImage: activePreset == "responsive" ? "bolt.fill" : "sparkles")
 					}
@@ -504,6 +517,16 @@ struct ParsecView: View {
 			}
 		}
 		.onAppear(perform: post)
+		.onDisappear { quickControls.captureStream() }
+		.onChange(of: settingsStore.resolution) { _ in quickControls.captureStream() }
+		.onChange(of: settingsStore.bitrate) { _ in quickControls.captureStream() }
+		.onChange(of: settingsStore.constantFps) { _ in quickControls.captureStream() }
+		.onChange(of: settingsStore.cursorMode) { _ in quickControls.captureStream() }
+		.onChange(of: settingsStore.zoomEnabled) { _ in quickControls.captureStream() }
+		.onChange(of: streamPreset) { _ in quickControls.captureStream() }
+		.onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+			quickControls.captureStream()
+		}
 		.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ParsecBackgroundDisconnect"))) { _ in
 			if #available(iOS 15.0, *) {
 				if PictureInPictureManager.shared.isPiPActive {
@@ -678,6 +701,29 @@ struct ParsecView: View {
 		if let c = controller {
 			c.setView(.main)
 		}
+	}
+
+	private func switchControlProfile() {
+		parsecViewController.resetKeyState()
+		CParsec.sendReleaseMessage()
+		let saved = quickControls.switchProfile()
+		if let window = parsecViewController.view.window { ParsecResolution.updateClientResolution(for: window) }
+		let resolution = ParsecResolution(rawValue: saved.resolution) ?? .client
+		SettingsHandler.resolution = resolution
+		SettingsHandler.bitrate = max(0, min(50, saved.bitrate))
+		SettingsHandler.constantFps = saved.constantFps
+		SettingsHandler.cursorMode = CursorMode(rawValue: saved.cursorMode) ?? .touchpad
+		SettingsHandler.zoomEnabled = saved.zoomEnabled
+		zoomEnabled = saved.zoomEnabled
+		parsecViewController.setZoomEnabled(zoomEnabled)
+		streamPreset = saved.preset
+		DataManager.model.resolutionX = resolution.width
+		DataManager.model.resolutionY = resolution.height
+		DataManager.model.constantFps = saved.constantFps
+		let bitrate = SettingsHandler.bitrate > 0 ? SettingsHandler.bitrate : DataManager.model.hostDefaultBitrate
+		if bitrate > 0 { DataManager.model.bitrate = bitrate }
+		CParsec.updateHostVideoConfig()
+		quickControls.captureStream()
 	}
 
 	private var activePreset: String {

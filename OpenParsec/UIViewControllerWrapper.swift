@@ -19,59 +19,6 @@ struct UIViewControllerWrapper<Wrapped: UIViewController>: UIViewControllerRepre
 	}
 }
 
-// A small native control surface so holding a key does not open the iOS keyboard
-// or forward that finger to the stream's mouse/touch overlay.
-struct QuickKeysOverlay: UIViewRepresentable {
-	var enabled: Bool
-
-	func makeUIView(context: Context) -> QuickKeysPanel {
-		QuickKeysPanel()
-	}
-
-	func updateUIView(_ uiView: QuickKeysPanel, context: Context) {
-		if !enabled { uiView.releaseAllKeys() }
-		uiView.isUserInteractionEnabled = enabled
-		uiView.alpha = enabled ? 1 : 0.4
-	}
-
-	static func dismantleUIView(_ uiView: QuickKeysPanel, coordinator: ()) {
-		uiView.releaseAllKeys()
-	}
-}
-
-final class QuickKeysPanel: UIView {
-	private let keys = [
-		QuickKeyButton(title: "Esc", keyCode: 41),
-		QuickKeyButton(title: "S", keyCode: 22),
-		QuickKeyButton(title: "Space", keyCode: 44)
-	]
-
-	init() {
-		super.init(frame: .zero)
-		let stack = UIStackView(arrangedSubviews: keys)
-		stack.axis = .vertical
-		stack.spacing = 10
-		stack.distribution = .fillEqually
-		stack.translatesAutoresizingMaskIntoConstraints = false
-		addSubview(stack)
-		NSLayoutConstraint.activate([
-			stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-			stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-			stack.topAnchor.constraint(equalTo: topAnchor),
-			stack.bottomAnchor.constraint(equalTo: bottomAnchor)
-		])
-	}
-
-	required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-	func releaseAllKeys() { keys.forEach { $0.releaseKey() } }
-
-	override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-		// Let the stream receive touches in the transparent gaps between keys.
-		keys.contains { $0.point(inside: convert(point, to: $0), with: event) }
-	}
-}
-
 final class QuickKeyButton: UIButton {
 	private let keyCode: UInt32
 	private var keyIsDown = false
@@ -137,56 +84,88 @@ final class QuickKeyButton: UIButton {
 	}
 }
 
-// Store normalized centers separately for each orientation. Clamp at display time
-// so a layout saved on another screen or with a keyboard stays reachable.
-struct QuickKeyLayout: Codable {
-	var x: Double
-	var y: Double
-	var size: Double = 48
-	var opacity: Double = 0.8
-}
-
 final class QuickControlSettings: ObservableObject {
 	static let shared = QuickControlSettings()
-	@Published private var layouts: [String: QuickKeyLayout]
-	static let titles = ["Esc", "S", "Space"]
-	static let codes: [UInt32] = [41, 22, 44]
+	@Published private var archive: ControlProfileArchive
+	var active: ControlProfileID { archive.active }
+	var buttons: [QuickControlButton] { profile.buttons }
+	var profile: ControlProfile { archive.profiles[active.rawValue]! }
 	private init() {
-		if let data = UserDefaults.standard.data(forKey: "quickKeyLayoutsV1"),
-		   let decoded = try? JSONDecoder().decode([String: QuickKeyLayout].self, from: data) {
-			layouts = decoded
-		} else { layouts = [:] }
-	}
-	func layout(_ index: Int, landscape: Bool) -> QuickKeyLayout {
-		let key = "\(landscape ? "landscape" : "portrait").\(index)"
-		let fallback = QuickKeyLayout(x: 0.94, y: 0.5 + Double(index - 1) * (landscape ? 0.18 : 0.09))
-		guard var value = layouts[key], value.x.isFinite, value.y.isFinite,
-		      value.size.isFinite, value.opacity.isFinite else { return fallback }
-		value.x = min(1, max(0, value.x)); value.y = min(1, max(0, value.y))
-		value.size = min(88, max(44, value.size)); value.opacity = min(1, max(0.25, value.opacity))
-		return value
-	}
-
-	func save(_ value: QuickKeyLayout, index: Int, landscape: Bool) {
-		layouts["\(landscape ? "landscape" : "portrait").\(index)"] = value
-		if let data = try? JSONEncoder().encode(layouts) {
-			UserDefaults.standard.set(data, forKey: "quickKeyLayoutsV1")
-		}
+		let current = Self.currentStream()
+		let pc = ControlStreamSettings(resolution: ParsecResolution.client.rawValue, bitrate: 25,
+			constantFps: true, cursorMode: CursorMode.touchpad.rawValue, zoomEnabled: false, preset: "quality")
+		let oldData = UserDefaults.standard.data(forKey: "quickKeyLayoutsV1")
+		let legacy = oldData.flatMap { try? JSONDecoder().decode([String: QuickKeyLayout].self, from: $0) } ?? [:]
+		let fallback = ControlProfileArchive(current: current, desktop: pc, legacy: legacy)
+		if let data = UserDefaults.standard.data(forKey: "controlProfilesV2"),
+		   var decoded = try? JSONDecoder().decode(ControlProfileArchive.self, from: data) {
+			decoded.sanitize(fallback: fallback)
+			archive = decoded
+		} else { archive = fallback }
+		persist()
 	}
 
+	static func currentStream() -> ControlStreamSettings {
+		ControlStreamSettings(resolution: SettingsHandler.resolution.rawValue, bitrate: SettingsHandler.bitrate,
+			constantFps: SettingsHandler.constantFps, cursorMode: SettingsHandler.cursorMode.rawValue,
+			zoomEnabled: SettingsHandler.zoomEnabled, preset: UserDefaults.standard.string(forKey: "streamQuickPreset") ?? "")
+	}
+	func persist() {
+		if let data = try? JSONEncoder().encode(archive) { UserDefaults.standard.set(data, forKey: "controlProfilesV2") }
+	}
+	func captureStream() {
+		var updated = profile
+		updated.stream = Self.currentStream()
+		archive.profiles[active.rawValue] = updated
+		persist()
+	}
+	func switchProfile() -> ControlStreamSettings {
+		captureStream()
+		archive.active = active == .game ? .desktop : .game
+		persist()
+		return profile.stream
+	}
+	private func update(_ operation: (inout ControlProfile) -> Void, persistNow: Bool = true) {
+		var updated = profile
+		operation(&updated)
+		archive.profiles[active.rawValue] = updated
+		if persistNow { persist() }
+	}
+	func layout(_ id: String, landscape: Bool) -> QuickKeyLayout {
+		guard let index = buttons.firstIndex(where: { $0.id == id }) else { return QuickKeyLayout(x: 0.9, y: 0.5) }
+		return buttons[index].layout(landscape: landscape, index: index)
+	}
+	func save(_ value: QuickKeyLayout, id: String, landscape: Bool, persistNow: Bool = true) {
+		update({ profile in
+			guard let index = profile.buttons.firstIndex(where: { $0.id == id }) else { return }
+			profile.buttons[index].layouts[landscape ? "landscape" : "portrait"] = value.clamped
+		}, persistNow: persistNow)
+	}
+	func changeKey(id: String, code: UInt32) {
+		CParsec.sendReleaseMessage()
+		update { $0.changeKey(id: id, code: code) }
+	}
+	func add(code: UInt32) -> String? {
+		var id: String?
+		update { id = $0.add(code: code) }
+		return id
+	}
+	func remove(id: String) {
+		CParsec.sendReleaseMessage()
+		update { $0.remove(id: id) }
+	}
 	func reset(landscape: Bool) {
-		for index in 0..<3 { layouts.removeValue(forKey: "\(landscape ? "landscape" : "portrait").\(index)") }
-		if let data = try? JSONEncoder().encode(layouts) {
-			UserDefaults.standard.set(data, forKey: "quickKeyLayoutsV1")
+		update { profile in
+			for index in profile.buttons.indices { profile.buttons[index].layouts.removeValue(forKey: landscape ? "landscape" : "portrait") }
 		}
 	}
 }
 
 private struct SingleQuickKey: UIViewRepresentable {
-	let index: Int
+	let code: UInt32
 	let enabled: Bool
 	func makeUIView(context: Context) -> QuickKeyButton {
-		QuickKeyButton(title: QuickControlSettings.titles[index], keyCode: QuickControlSettings.codes[index])
+		QuickKeyButton(title: QuickKeyChoice.title(code), keyCode: code)
 	}
 	func updateUIView(_ view: QuickKeyButton, context: Context) {
 		if !enabled { view.releaseKey() }
@@ -200,29 +179,43 @@ struct CustomQuickControls: View {
 	@Binding var editing: Bool
 	@ObservedObject private var settings = QuickControlSettings.shared
 	@AppStorage("quickKeyHaptics") private var haptics = true
-	@State private var selected = 0
+	@State private var selectedID = ""
 	@State private var dragOrigin: CGPoint?
+	private var selection: String {
+		settings.buttons.contains(where: { $0.id == selectedID }) ? selectedID : settings.buttons.first!.id
+	}
+	private var selectedButton: QuickControlButton { settings.buttons.first { $0.id == selection }! }
+	private var availableKeys: [QuickKeyChoice] {
+		QuickKeyChoice.all.filter { choice in !settings.buttons.contains { $0.code == choice.id } }
+	}
+	private var selectableKeys: [QuickKeyChoice] {
+		QuickKeyChoice.all.filter { choice in choice.id == selectedButton.code || !settings.buttons.contains(where: { $0.code == choice.id }) }
+	}
 
 	var body: some View {
 		GeometryReader { geometry in
 			let landscape = geometry.size.width > geometry.size.height
 			ZStack {
-				if editing {
-					Color.black.opacity(0.25).contentShape(Rectangle())
-				}
-				ForEach(0..<3) { index in
-					key(index, size: geometry.size, landscape: landscape)
+				if editing { Color.black.opacity(0.25).contentShape(Rectangle()) }
+				ForEach(settings.buttons) { button in
+					key(button, size: geometry.size, landscape: landscape)
 				}
 				if editing {
 					editor(landscape: landscape)
-						.frame(maxWidth: 320)
+						.frame(maxWidth: 320, maxHeight: max(100, geometry.size.height - 16))
 						.padding(8)
 						.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 				}
 			}
 			.onChange(of: editing) { _ in
 				dragOrigin = nil
+				settings.persist()
 				CParsec.sendReleaseMessage()
+			}
+			.onChange(of: landscape) { _ in dragOrigin = nil; settings.persist() }
+			.onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+				dragOrigin = nil
+				settings.persist()
 			}
 		}
 	}
@@ -234,30 +227,31 @@ struct CustomQuickControls: View {
 		               y: min(max(halfHeight, size.height - halfHeight), max(halfHeight, CGFloat(layout.y) * size.height)))
 	}
 
-	@ViewBuilder private func key(_ index: Int, size: CGSize, landscape: Bool) -> some View {
-		let layout = settings.layout(index, landscape: landscape)
+	@ViewBuilder private func key(_ button: QuickControlButton, size: CGSize, landscape: Bool) -> some View {
+		let layout = settings.layout(button.id, landscape: landscape)
 		let position = center(layout, size: size)
 		Group {
 			if editing {
-				Text(QuickControlSettings.titles[index])
+				Text(QuickKeyChoice.title(button.code))
 					.font(.system(size: 14, weight: .semibold))
 					.frame(width: layout.size * 1.4, height: layout.size)
-					.background(selected == index ? Color.blue : Color.black.opacity(0.8))
+					.background(selection == button.id ? Color.blue : Color.black.opacity(0.8))
 					.cornerRadius(10)
 					.overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white, lineWidth: 2))
 					.gesture(DragGesture(minimumDistance: 0)
 						.onChanged { value in
-							selected = index
+							selectedID = button.id
 							if dragOrigin == nil { dragOrigin = position }
 							guard let origin = dragOrigin, size.width > 0, size.height > 0 else { return }
 							var updated = layout
-							updated.x = min(1, max(0, Double((origin.x + value.translation.width) / size.width)))
-							updated.y = min(1, max(0, Double((origin.y + value.translation.height) / size.height)))
-							settings.save(updated, index: index, landscape: landscape)
+							updated.x = Double((origin.x + value.translation.width) / size.width)
+							updated.y = Double((origin.y + value.translation.height) / size.height)
+							settings.save(updated, id: button.id, landscape: landscape, persistNow: false)
 						}
-						.onEnded { _ in dragOrigin = nil })
+						.onEnded { _ in dragOrigin = nil; settings.persist() })
 			} else {
-				SingleQuickKey(index: index, enabled: enabled)
+				SingleQuickKey(code: button.code, enabled: enabled)
+					.id("\(settings.active.rawValue).\(button.id).\(button.code)")
 					.frame(width: layout.size * 1.4, height: layout.size)
 			}
 		}
@@ -269,24 +263,38 @@ struct CustomQuickControls: View {
 	private func editor(landscape: Bool) -> some View {
 		VStack(spacing: 8) {
 			HStack {
-				Text(landscape ? "가로 버튼 배치" : "세로 버튼 배치").font(.headline)
+				Text("\(settings.active.title) · \(landscape ? "가로" : "세로")").font(.headline)
 				Spacer()
-				Button("완료") { editing = false }
+				Button("완료") { settings.persist(); editing = false }
 			}
-			Text("버튼을 드래그해서 이동 · 자동 저장").font(.caption)
-			Picker("버튼", selection: $selected) {
-				ForEach(0..<3) { Text(QuickControlSettings.titles[$0]).tag($0) }
-			}.pickerStyle(SegmentedPickerStyle())
-			HStack {
-				Text("크기").font(.caption)
-				Slider(value: binding(\.size, landscape: landscape), in: 44...88, step: 2)
+			ScrollView {
+				VStack(spacing: 10) {
+					Text("버튼 드래그로 이동 · 자동 저장").font(.caption)
+					Picker("편집할 버튼", selection: Binding(get: { selection }, set: { selectedID = $0 })) {
+						ForEach(settings.buttons) { Text(QuickKeyChoice.title($0.code)).tag($0.id) }
+					}.pickerStyle(MenuPickerStyle())
+					Picker("키 변경", selection: Binding(get: { selectedButton.code }, set: { settings.changeKey(id: selection, code: $0) })) {
+						ForEach(selectableKeys) { choice in
+							Text(QuickKeyChoice.title(choice.id)).tag(choice.id)
+						}
+					}.pickerStyle(MenuPickerStyle())
+					HStack {
+						Menu("버튼 추가") {
+							ForEach(availableKeys) { choice in
+								Button(choice.title) { if let id = settings.add(code: choice.id) { selectedID = id } }
+							}
+						}.disabled(settings.buttons.count >= ControlProfile.maximumButtons)
+						Spacer()
+						Button("선택 삭제") { settings.remove(id: selection); selectedID = "" }
+							.disabled(settings.buttons.count <= 1)
+					}
+					HStack { Text("크기").font(.caption); Slider(value: binding(\.size, landscape: landscape), in: 44...88, step: 2) }
+					HStack { Text("투명도").font(.caption); Slider(value: binding(\.opacity, landscape: landscape), in: 0.25...1, step: 0.05) }
+					Toggle("가벼운 진동", isOn: $haptics).font(.caption)
+					Text("Ctrl·Alt·Shift·Win은 누르고 있는 동안 적용됩니다.").font(.caption)
+					Button("현재 방향 배치 초기화") { settings.reset(landscape: landscape) }.font(.caption)
+				}
 			}
-			HStack {
-				Text("투명도").font(.caption)
-				Slider(value: binding(\.opacity, landscape: landscape), in: 0.25...1, step: 0.05)
-			}
-			Toggle("가벼운 진동", isOn: $haptics).font(.caption)
-			Button("현재 방향 배치 초기화") { settings.reset(landscape: landscape) }.font(.caption)
 		}
 		.padding(12)
 		.background(Color.black.opacity(0.9))
@@ -295,10 +303,10 @@ struct CustomQuickControls: View {
 	}
 
 	private func binding(_ path: WritableKeyPath<QuickKeyLayout, Double>, landscape: Bool) -> Binding<Double> {
-		Binding(get: { settings.layout(selected, landscape: landscape)[keyPath: path] }, set: { value in
-			var layout = settings.layout(selected, landscape: landscape)
+		Binding(get: { settings.layout(selection, landscape: landscape)[keyPath: path] }, set: { value in
+			var layout = settings.layout(selection, landscape: landscape)
 			layout[keyPath: path] = value
-			settings.save(layout, index: selected, landscape: landscape)
+			settings.save(layout, id: selection, landscape: landscape)
 		})
 	}
 }

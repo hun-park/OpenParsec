@@ -19,6 +19,12 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '26.2'
+      - name: Test profiles and reconnect recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc OpenParsec/ControlProfiles.swift Tests/Controls/main.swift -o "$RUNNER_TEMP/control-tests"
+          "$RUNNER_TEMP/control-tests"
       - name: Build unsigned IPA for Sideloadly
         shell: bash
         run: |

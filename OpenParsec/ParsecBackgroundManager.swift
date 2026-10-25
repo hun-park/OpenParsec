@@ -27,7 +27,11 @@ class ParsecBackgroundManager {
 	}
 	private var didDisconnectDueToBackground = false
 	private(set) var isReconnecting = false
-	var reconnectAttempts = 0
+	var recovery = ReconnectRecovery()
+	var reconnectAttempts: Int {
+		get { recovery.attempts }
+		set { recovery.attempts = newValue; recovery.noteFailure() }
+	}
 	var reconnectStartTime = Date()
 	var resumedAt: Date?
 	var isPaused = false

@@ -99,4 +99,41 @@ host, cancellation, auto-reconnect disabled, and PiP. The host must support the
 requested display modes and be reachable; iOS cannot recover a session while
 the app is terminated or the PC is offline.
 
-An Xcode build and physical-device checks are separate acceptance steps.
+### Game/PC profiles and configurable keys (build 20261025.5)
+
+The top-right Game/PC button switches profiles immediately. Each profile stores
+its own key list, portrait/landscape layouts, requested resolution, bitrate,
+constant-frame-rate choice, touch mode, zoom, and quick-preset label. Existing
+settings become the Game profile; existing placements initialize both profiles.
+PC initially requests native resolution, 25 Mbps, constant frames, touchpad and
+zoom off. Later choices persist independently. Codec, render FPS, and haptics
+remain shared. The old V1 layout archive is retained as migration fallback.
+
+The editor supports changing keys and adding/removing buttons (1–12, no duplicate
+HID codes within a profile). Choices include Esc, Space, Enter, Tab, Backspace,
+Del, arrows, A–Z, 0–9, F1–F12, Ctrl, Shift, Alt and Win. Modifiers apply while
+held, allowing multi-touch chords. Editing, profile switches and key replacement
+release existing input. Native views have identities that change with the key
+code, so a relabeled control cannot silently continue sending its old key.
+Dragging updates the preview immediately and persists when the gesture ends,
+the orientation changes, editing closes or the app resigns active.
+
+Reconnect counters now reset only after five uninterrupted healthy foreground
+seconds, measured with monotonic uptime. Brief PARSEC_OK intervals, networkFailure
+flags and rapid app switching cannot refill the same outage's retry budget.
+Manual reconnect still starts a fresh budget; permanent failures retain normal
+handling. Controls remain disabled during connection loss/reconnect.
+
+Automated regression checks in Tests/Controls/main.swift run against the same
+Foundation model compiled into the app. They cover V1 migration, independent
+profile/orientation data, persistence roundtrips, key limits and validation,
+corrupt layouts, and retry-budget recovery under flapping/background scenarios.
+
+Additional device checks: change S to Enter and verify Windows receives Enter;
+add arrows and Ctrl then hold Ctrl+C using two controls; delete a held key only
+after entering editing and confirm input is released. Customize both profiles,
+switch repeatedly, rotate, restart and reconnect. Inspect actual stream settings
+after profile changes and test brief recovery followed by another network loss.
+
+An Xcode build, model regression checks and physical-device checks are separate
+acceptance steps. CI does not establish touch behavior or real network recovery.

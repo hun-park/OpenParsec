@@ -235,4 +235,38 @@ check(languagePackets == pulse + pulse, "real HID 57 trace with mirrored LANG1 y
 check(!languagePackets.contains { $0.code == 57 || $0.code == 144 }, "hardware language route never leaks Caps Lock or ineffective LANG1 to Windows")
 check(languageState.held.isEmpty, "complete physical language trace leaves no held keys")
 
+
+// Unchanged callbacks must be cheap, without dropping later unsaved edits or
+// cross-profile/orientation values when an actual persistence boundary arrives.
+var persistence = ControlProfilePersistence()
+var persisted = fallback
+let initialSave = try persistence.dataIfChanged(persisted)
+check(initialSave != nil, "first profile persistence produces a save")
+let initialRestored = try JSONDecoder().decode(ControlProfileArchive.self, from: initialSave!)
+check(initialRestored == persisted, "persistence preserves the complete original archive format")
+var unchangedSaves = 0
+for _ in 0..<100 { if try persistence.dataIfChanged(persisted) != nil { unchangedSaves += 1 } }
+check(unchangedSaves == 0, "one hundred unchanged lifecycle callbacks produce no extra archive saves")
+let savedID = persisted.profiles["game"]!.buttons[0].id
+persisted.profiles["game"]!.buttons[0].layouts["portrait"] = QuickKeyLayout(x: 0.2, y: 0.7, size: 64, opacity: 0.4)
+let dragSave = try persistence.dataIfChanged(persisted)
+check(dragSave != nil, "an unsaved drag remains visible to the next persistence boundary")
+let savedDrag = try JSONDecoder().decode(ControlProfileArchive.self, from: dragSave!)
+check(savedDrag.profiles["game"]!.buttons[0].id == savedID && savedDrag.profiles["game"]!.buttons[0].layouts["portrait"]!.x == 0.2, "saving a moved button preserves identity and new position")
+check(savedDrag.profiles["desktop"] == fallback.profiles["desktop"], "saving game controls preserves PC profile")
+check(savedDrag.profiles["game"]!.buttons[0].layouts["landscape"] == fallback.profiles["game"]!.buttons[0].layouts["landscape"], "saving portrait controls preserves landscape controls")
+persisted.active = .desktop
+let switchedSave = try persistence.dataIfChanged(persisted)
+check(switchedSave != nil, "changing active profile is persisted even when controls match")
+persisted.profiles["desktop"]!.stream.bitrate = 8
+let streamSave = try persistence.dataIfChanged(persisted)
+check(streamSave != nil, "stream setting edits produce a save")
+let repeatedStreamSave = try persistence.dataIfChanged(persisted)
+check(repeatedStreamSave == nil, "repeated stream callbacks do not rewrite the archive")
+persisted = fallback
+let revertedSave = try persistence.dataIfChanged(persisted)
+check(revertedSave != nil, "reverting to older values is persisted after intervening changes")
+let revertedRestored = try JSONDecoder().decode(ControlProfileArchive.self, from: revertedSave!)
+check(revertedRestored == fallback, "reverted settings retain every profile and control")
+
 print("All \(passed) control/profile/recovery/hardware keyboard/display regression checks passed.")

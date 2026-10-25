@@ -44,7 +44,7 @@ struct QuickKeyLayout: Codable, Equatable {
 	}
 }
 
-struct QuickControlButton: Codable, Identifiable {
+struct QuickControlButton: Codable, Identifiable, Equatable {
 	var id = UUID().uuidString
 	var code: UInt32
 	var layouts: [String: QuickKeyLayout] = [:]
@@ -67,7 +67,7 @@ struct ControlStreamSettings: Codable, Equatable {
 	var preset: String
 }
 
-struct ControlProfile: Codable {
+struct ControlProfile: Codable, Equatable {
 	var buttons: [QuickControlButton]
 	var stream: ControlStreamSettings
 	static let maximumButtons = 12
@@ -104,7 +104,7 @@ struct ControlProfile: Codable {
 	}
 }
 
-struct ControlProfileArchive: Codable {
+struct ControlProfileArchive: Codable, Equatable {
 	var active: ControlProfileID = .game
 	var profiles: [String: ControlProfile]
 	init(current: ControlStreamSettings, desktop: ControlStreamSettings, legacy: [String: QuickKeyLayout]) {
@@ -127,6 +127,16 @@ struct ControlProfileArchive: Codable {
 	}
 }
 
+// Compare values before encoding so repeated lifecycle/setting callbacks do not
+// rewrite the same archive. Keep a value snapshot, including unsaved drag edits.
+struct ControlProfilePersistence {
+	private var lastSaved: ControlProfileArchive?
+	mutating func dataIfChanged(_ archive: ControlProfileArchive) throws -> Data? {
+		guard archive != lastSaved else { return nil }
+		let data = try JSONEncoder().encode(archive)
+		lastSaved = archive
+		return data
+	}
 // A short PARSEC_OK interval must not refill an outage's retry budget.
 struct ReconnectRecovery {
 	var attempts = 0

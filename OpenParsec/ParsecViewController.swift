@@ -312,31 +312,11 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 
 		NotificationCenter.default.addObserver(
 			self,
-			selector: #selector(keyboardWillShow),
-			name: UIResponder.keyboardWillShowNotification,
-			object: nil
-		)
-		NotificationCenter.default.addObserver(
-			self,
 			selector: #selector(inputWasReleased),
 			name: NSNotification.Name("ParsecInputReleased"),
 			object: nil
 		)
 
-		NotificationCenter.default.addObserver(
-			self,
-			selector: #selector(keyboardWillHide),
-			name: UIResponder.keyboardWillHideNotification,
-			object: nil
-		)
-
-		// Backgrounding / Control Center / system alerts can orphan touches; flush on resign.
-		NotificationCenter.default.addObserver(
-			self,
-			selector: #selector(appWillResignActive),
-			name: UIApplication.willResignActiveNotification,
-			object: nil
-		)
 		for name in [NSNotification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect,
 		             NSNotification.Name("HardwareKeyboardModeChanged"), UIApplication.didBecomeActiveNotification] {
 			NotificationCenter.default.addObserver(self, selector: #selector(configureHardwareKeyboard), name: name, object: nil)
@@ -381,6 +361,22 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 		contentView.frame.size = CGSize(width: w, height: h)
 		scrollView.contentSize = CGSize(width: w, height: h)
 		CParsec.setFrame(w, h, UIScreen.main.scale)
+	}
+
+	// These observers are removed on disappearance; reattach on every entry,
+	// including reuse of the persistent controller without another viewDidLoad.
+	// Resign-active notifications also flush keys orphaned by system alerts.
+	override func viewWillAppear(_ animated: Bool) {
+		super.viewWillAppear(animated)
+		NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
+		NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
+		NotificationCenter.default.addObserver(self, selector: #selector(appWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
+	}
+
+	deinit {
+		NotificationCenter.default.removeObserver(self)
+		repeatTimer?.invalidate()
+		momentumLink?.invalidate()
 	}
 
 	override func viewDidAppear(_ animated: Bool) {
@@ -660,12 +656,12 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 		stopKeyRepeat()
 		repeatKeyCode = keyCode
 
-		repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+		repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] timer in
 			MainActor.assumeIsolated {
-				guard let self = self else { return }
-				self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { [weak self] _ in
+				guard let self = self, self.repeatTimer === timer else { timer.invalidate(); return }
+				self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { [weak self] timer in
 					MainActor.assumeIsolated {
-						guard let self = self else { return }
+						guard let self = self, self.repeatTimer === timer else { timer.invalidate(); return }
 						CParsec.sendKeyboardMessage(keyCode: UInt32(self.repeatKeyCode), pressed: false)
 						CParsec.sendKeyboardMessage(keyCode: UInt32(self.repeatKeyCode), pressed: true)
 					}

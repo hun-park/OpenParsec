@@ -12,7 +12,6 @@ struct ParsecStatusBar: View {
 	@Binding var connectionLost: Bool
 	@State var networkFailureSince: Date?
 	@State var parsecViewController: ParsecViewController?
-	@State var wasDisconnected: Bool = true
 	@State private var didEnterBackground = false
 	let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 	let onSilentDisconnect: () -> Void
@@ -123,7 +122,6 @@ struct ParsecStatusBar: View {
 				try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 				ParsecBackgroundManager.shared.connectionDidEnd()
 				ParsecBackgroundManager.shared.markForReconnect()
-				wasDisconnected = true
 				return
 			}
 
@@ -145,7 +143,6 @@ struct ParsecStatusBar: View {
 			}
 
 			isReconnecting = false
-			wasDisconnected = true
 			let silent = SettingsHandler.autoReconnect && !SettingsHandler.errorPrompts && !status.isPermanentFailure
 			appNote("[stream] ended, status \(status.rawValue), \(silent ? "silent" : "alert")")
 			if silent {
@@ -202,7 +199,6 @@ struct ParsecView: View {
 
 	@State var showDCAlert: Bool = false
 	@State var DCAlertText: String = "Disconnected (reason unknown)"
-	@State var metricInfo: String = "Loading..."
 
 	@State var hideOverlay: Bool = false
 	@State var hideKeyboardButton: Bool = false

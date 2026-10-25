@@ -87,6 +87,7 @@ final class QuickKeyButton: UIButton {
 final class QuickControlSettings: ObservableObject {
 	static let shared = QuickControlSettings()
 	@Published private var archive: ControlProfileArchive
+	private var persistence = ControlProfilePersistence()
 	var active: ControlProfileID { archive.active }
 	var buttons: [QuickControlButton] { profile.buttons }
 	var profile: ControlProfile { archive.profiles[active.rawValue]! }
@@ -111,11 +112,13 @@ final class QuickControlSettings: ObservableObject {
 			zoomEnabled: SettingsHandler.zoomEnabled, preset: UserDefaults.standard.string(forKey: "streamQuickPreset") ?? "")
 	}
 	func persist() {
-		if let data = try? JSONEncoder().encode(archive) { UserDefaults.standard.set(data, forKey: "controlProfilesV2") }
+		if let data = try? persistence.dataIfChanged(archive) { UserDefaults.standard.set(data, forKey: "controlProfilesV2") }
 	}
 	func captureStream() {
 		var updated = profile
-		updated.stream = Self.currentStream()
+		let stream = Self.currentStream()
+		guard updated.stream != stream else { persist(); return }
+		updated.stream = stream
 		archive.profiles[active.rawValue] = updated
 		persist()
 	}
@@ -128,6 +131,10 @@ final class QuickControlSettings: ObservableObject {
 	private func update(_ operation: (inout ControlProfile) -> Void, persistNow: Bool = true) {
 		var updated = profile
 		operation(&updated)
+		guard updated != profile else {
+			if persistNow { persist() }
+			return
+		}
 		archive.profiles[active.rawValue] = updated
 		if persistNow { persist() }
 	}

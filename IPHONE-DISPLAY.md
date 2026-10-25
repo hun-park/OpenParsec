@@ -287,3 +287,31 @@ Regression tests inspect Right Alt packet sequences, release ordering, stale
 modifiers and immediate typing; physical iPad acceptance remains pending.
 
 https://learn.microsoft.com/en-us/globalization/input/korean-ime
+
+### Stability and redundant-work cleanup (20261026.4)
+
+Baseline .3 was explicitly confirmed fully working by the user. Preserve its
+hardware mapping/router (including Right Alt language taps and HID 41 Option),
+UI controls, saved profile schema, orientation and reconnect policy unchanged.
+A local source ZIP, IPA, checksum and baseline manifest are retained in
+backups/stable-20261026.3 outside this source checkout.
+
+Keyboard show/hide and app-resign notification subscriptions now attach in
+viewWillAppear, paired with the existing removal in viewWillDisappear. The old
+viewDidLoad-only registration never reattached after a persistent controller
+was reused. Deinitialization removes remaining observers and invalidates timers.
+Repeat callbacks verify that they still own the active timer, so stale callbacks
+cannot restart a cancelled hold or send keys for a newer hold. Repeat timings
+are unchanged.
+
+Profile updates avoid publishing identical values. A value-based persistence
+snapshot skips JSON encoding/UserDefaults writes for an unchanged archive.
+Explicit save/lifecycle boundaries still flush pending drag edits even when
+stream values did not change. Codable schema, migration and button identities
+are unchanged. Regression checks cover unchanged callbacks, deferred drag saves,
+profile switching, reverting settings and independent portrait/landscape values.
+
+Remove write-only wasDisconnected state and unused parent metricInfo state.
+Input diagnostics remain optional and off by default. CI checks and source
+comparison against the working baseline do not replace device acceptance of
+background/foreground, reconnect, held keys, profiles and keyboard re-entry.

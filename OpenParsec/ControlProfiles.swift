@@ -156,21 +156,17 @@ struct WindowsHardwareKeyState {
 		if pressed {
 			guard held[raw] == nil, let code = Self.mappedCode(raw, capsToHangul: capsToHangul) else { return [] }
 			if code == 144 {
-				// Match the working screen button: never leave LANG1 held while
-				// waiting for a delayed or missing Bluetooth Caps Lock key-up.
+				// 144 is a local semantic language usage, not the Windows packet.
+				// Korean Microsoft IME on a 101A host switches with Right Alt.
 				let languageAlreadyHeld = held.keys.contains { $0 == 144 || ($0 == 57 && capsToHangul) }
 				held[raw] = 0
-				return languageAlreadyHeld ? [] : [.init(code: 144, pressed: true), .init(code: 144, pressed: false)]
+				return languageAlreadyHeld ? [] : pulseHangul(raw: raw)
 			}
-			let controls = held.keys.filter { ($0 == 224 || $0 == 228) && held[$0] == $0 }.sorted()
 			if raw == 44, controlSpaceToHangul, controlSpaceReady {
 				// Consume Space until key-up. Pulse Hangul with Ctrl released on the
 				// host. Consume delayed Ctrl releases instead of re-holding Ctrl over
 				// the next typed letter (some Bluetooth keyboards delay modifier-up).
-				held[raw] = 0
-				for control in controls { held[control] = 0 }
-				return controls.map { .init(code: $0, pressed: false) }
-					+ [.init(code: 144, pressed: true), .init(code: 144, pressed: false)]
+				return pulseHangul(raw: raw)
 			}
 			held[raw] = code
 			// A dedicated LANG1 and remapped Caps Lock can share one host key.
@@ -215,6 +211,11 @@ struct WindowsHardwareKeyState {
 		for modifier in modifiers { held[modifier] = 0 }
 		held[raw] = 0
 		return releases + modifiers.map { .init(code: $0, pressed: false) }
+	}
+	mutating func pulseHangul(raw: UInt32) -> [HardwareKeyPacket] {
+		// Consume modifiers before the IME tap. Delayed Bluetooth releases or
+		// stale UIKit flags must not turn it into Ctrl+Alt or shift later text.
+		consumeShortcut(raw: raw) + [.init(code: 230, pressed: true), .init(code: 230, pressed: false)]
 	}
 	mutating func reset() { held.removeAll() }
 	static func repeats(_ code: UInt32) -> Bool { code < 224 && code != 57 && code != 144 && code != 145 }

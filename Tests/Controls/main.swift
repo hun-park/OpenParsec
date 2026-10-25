@@ -91,7 +91,7 @@ for usage in [UInt32(224), 225, 226, 227, 228, 229, 230, 231] {
 	check(hardware.transition(raw: usage, pressed: true, capsToHangul: true).isEmpty, "modifier \(usage) duplicate press suppressed")
 	check(hardware.transition(raw: usage, pressed: false, capsToHangul: true) == [.init(code: usage, pressed: false)], "modifier \(usage) releases Windows HID")
 }
-check(hardware.transition(raw: 57, pressed: true, capsToHangul: true) == [.init(code: 144, pressed: true), .init(code: 144, pressed: false)], "Caps Lock sends a complete Korean LANG1 tap")
+check(hardware.transition(raw: 57, pressed: true, capsToHangul: true) == [.init(code: 230, pressed: true), .init(code: 230, pressed: false)], "Caps Lock sends a complete Windows Right Alt IME tap")
 check(hardware.transition(raw: 57, pressed: false, capsToHangul: false) .isEmpty, "consumed language keyup stays silent even if setting changed")
 check(hardware.transition(raw: 57, pressed: true, capsToHangul: false) == [.init(code: 57, pressed: true)], "Caps remapping can be disabled")
 _ = hardware.transition(raw: 57, pressed: false, capsToHangul: false)
@@ -113,7 +113,7 @@ check(!WindowsHardwareKeyState.repeats(144) && !WindowsHardwareKeyState.repeats(
 check(WindowsHardwareKeyState.repeats(4) && WindowsHardwareKeyState.repeats(42), "letters and Backspace can repeat")
 hardware.reset()
 _ = hardware.transition(raw: 224, pressed: true, capsToHangul: true)
-let controlSpace: [HardwareKeyPacket] = [.init(code: 224, pressed: false), .init(code: 144, pressed: true), .init(code: 144, pressed: false)]
+let controlSpace: [HardwareKeyPacket] = [.init(code: 224, pressed: false), .init(code: 230, pressed: true), .init(code: 230, pressed: false)]
 check(hardware.transition(raw: 44, pressed: true, capsToHangul: true, controlSpaceToHangul: true) == controlSpace, "Control+Space pulses Hangul and immediately consumes held Ctrl")
 check(hardware.transition(raw: 44, pressed: true, capsToHangul: true, controlSpaceToHangul: true).isEmpty, "holding Control+Space does not repeatedly change language")
 check(hardware.transition(raw: 44, pressed: false, capsToHangul: true, controlSpaceToHangul: true).isEmpty, "consumed Space never leaks a Space keyup")
@@ -197,11 +197,42 @@ check(hardware.transition(raw: 43, pressed: true, capsToHangul: true) == [.init(
 _ = hardware.transition(raw: 43, pressed: false, capsToHangul: true)
 check(hardware.transition(raw: mappedOption, pressed: false, capsToHangul: true) == [.init(code: 226, pressed: false)], "compatibility Option releases Alt")
 hardware.reset()
-let pulse: [HardwareKeyPacket] = [.init(code: 144, pressed: true), .init(code: 144, pressed: false)]
-check(hardware.transition(raw: 144, pressed: true, capsToHangul: true) == pulse, "canonical hardware language event matches working screen tap")
-check(!hardware.held.values.contains(144), "host language key is not held while physical release is delayed")
+let pulse: [HardwareKeyPacket] = [.init(code: 230, pressed: true), .init(code: 230, pressed: false)]
+check(hardware.transition(raw: 144, pressed: true, capsToHangul: true) == pulse, "semantic language usage sends Right Alt instead of ineffective LANG1")
+check(!hardware.held.values.contains(230), "host language key is not held while physical release is delayed")
 check(hardware.transition(raw: 144, pressed: true, capsToHangul: true).isEmpty, "language key repeat cannot repeatedly toggle IME")
 _ = hardware.transition(raw: 144, pressed: false, capsToHangul: true)
 check(hardware.transition(raw: 144, pressed: true, capsToHangul: true) == pulse, "next language press can toggle after release")
+
+
+hardware.reset()
+_ = hardware.transition(raw: 224, pressed: true, capsToHangul: true)
+_ = hardware.transition(raw: 225, pressed: true, capsToHangul: true)
+check(hardware.transition(raw: 57, pressed: true, capsToHangul: true) == [.init(code: 224, pressed: false), .init(code: 225, pressed: false)] + pulse, "Caps language tap releases Ctrl and Shift before Right Alt")
+check(hardware.reconcileModifiers([224, 225]).isEmpty, "stale modifier flags after Caps cannot modify subsequent typing")
+check(hardware.transition(raw: 4, pressed: true, capsToHangul: true) == [.init(code: 4, pressed: true)], "typing immediately after Caps sends a plain letter")
+check(hardware.transition(raw: 224, pressed: false, capsToHangul: true).isEmpty, "late Ctrl up after Caps remains consumed")
+hardware.reset()
+check(hardware.pulseHangul(raw: 44) == pulse, "UIKeyCommand Control Space uses the same Windows Right Alt tap")
+check(hardware.transition(raw: 44, pressed: false, capsToHangul: true).isEmpty, "command shortcut consumes trailing Space release")
+
+
+var languageMux = HardwareInputMux()
+var languageState = WindowsHardwareKeyState()
+var languagePackets: [HardwareKeyPacket] = []
+let languageTrace: [(UInt32, Bool, HardwareKeySource, TimeInterval)] = [
+ (57, true, .uiKit, 20), (144, true, .gameController, 20.001),
+ (57, false, .uiKit, 20.01), (144, false, .gameController, 20.011),
+ (57, true, .uiKit, 21), (57, false, .uiKit, 21.01)
+]
+for (raw, pressed, source, time) in languageTrace {
+ let routed = WindowsHardwareKeyState.mappedCode(raw, capsToHangul: true)!
+ if languageMux.accept(code: routed, pressed: pressed, source: source, at: time) {
+  languagePackets += languageState.transition(raw: routed, pressed: pressed, capsToHangul: true)
+ }
+}
+check(languagePackets == pulse + pulse, "real HID 57 trace with mirrored LANG1 yields exactly two Right Alt taps")
+check(!languagePackets.contains { $0.code == 57 || $0.code == 144 }, "hardware language route never leaks Caps Lock or ineffective LANG1 to Windows")
+check(languageState.held.isEmpty, "complete physical language trace leaves no held keys")
 
 print("All \(passed) control/profile/recovery/hardware keyboard/display regression checks passed.")

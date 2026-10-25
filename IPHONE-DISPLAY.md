@@ -268,3 +268,22 @@ Move the next-display control out of the menu and directly below the left
 keyboard toggle as a 48pt cycle icon with a screen caption. Manual display
 selection and Control+Option+M remain. Regression tests/CI do not establish
 that this keyboard's Option or Caps behavior is fixed on the physical iPad.
+
+### Windows IME host key correction (20261026.3)
+
+The user confirmed physical HID 57 still does not toggle IME in .2. That build
+changed only pulse timing and still sent LANG1 (144). Treat the canonical 144
+as a local semantic usage and emit a Right Alt (230) tap for hardware Caps,
+LANG1 and Control+Space (including the UIKeyCommand fallback). Current host
+read-only registry inspection reports PCAT_101AKEY; Microsoft documents Right
+Alt for toggling Korean Microsoft IME. The upstream PR #102 also reports a
+physical keyboard test of that route, but neither proves this user's device.
+
+Consume accompanying modifiers before the tap and keep stale flags consumed
+until release. Keep ordinary Option/Control and physical Right Alt routing.
+Remove only the menu PC Hangul button and its unused method. The left display
+button and configurable quick keys remain. No Windows input settings changed.
+Regression tests inspect Right Alt packet sequences, release ordering, stale
+modifiers and immediate typing; physical iPad acceptance remains pending.
+
+https://learn.microsoft.com/en-us/globalization/input/korean-ime

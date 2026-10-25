@@ -502,9 +502,8 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 		      hardwareShortcutGate.allow(.hangul, source: .command, at: ProcessInfo.processInfo.systemUptime) else { return }
 		HardwareKeyboardDiagnostics.shared.command("Control+Space")
 		sendHardwarePackets(windowsKeyState.reconcileModifiers([224]))
-		sendHardwarePackets(windowsKeyState.consumeShortcut(raw: 44))
 		stopKeyRepeat()
-		sendHardwarePackets([.init(code: 144, pressed: true), .init(code: 144, pressed: false)])
+		sendHardwarePackets(windowsKeyState.pulseHangul(raw: 44))
 	}
 	@objc private func nextDisplayCommand() {
 		guard canForwardHardwareKeys,
@@ -585,12 +584,6 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 			if routed == 226 && !pressed { compatibilityOptionHeld = false }
 			forwardHardwareKey(routed, pressed: pressed)
 		}
-	}
-
-	func sendHangulToggle() {
-		guard ParsecBackgroundManager.shared.hasActiveConnection else { return }
-		CParsec.sendKeyboardMessage(keyCode: 144, pressed: true)
-		CParsec.sendKeyboardMessage(keyCode: 144, pressed: false)
 	}
 
 	override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {

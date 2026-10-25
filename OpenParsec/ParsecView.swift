@@ -415,9 +415,6 @@ struct ParsecView: View {
 									.frame(maxWidth: .infinity)
 									.multilineTextAlignment(.center)
 							}
-							Button(action: { parsecViewController.sendHangulToggle() }) {
-								Text("PC 한/영 전환").padding(8).frame(maxWidth: .infinity)
-							}
 							Button(action: { keyboardDiagnostics.enabled.toggle() }) {
 								Text(keyboardDiagnostics.enabled ? "키 입력 진단 끄기" : "키 입력 진단 켜기")
 									.padding(8).frame(maxWidth: .infinity)

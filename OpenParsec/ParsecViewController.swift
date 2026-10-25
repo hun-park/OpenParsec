@@ -1566,6 +1566,9 @@ class TouchOverlayView: UIView {
 	// dropped here — otherwise it warps the direct-mode cursor and fights touchpad-mode drags.
 	private func forward(_ event: UIEvent?, moved: Bool) {
 		let active = (event?.allTouches ?? []).filter { touch in
+			// allTouches also includes quick-key/editor controls in this window.
+			// Keep their fingers out of cursor, pinch and two-finger gestures.
+			guard touch.view === self else { return false }
 			guard touch.phase != .ended && touch.phase != .cancelled else { return false }
 			if #available(iOS 13.4, *), touch.type == .indirectPointer { return false }
 			return true

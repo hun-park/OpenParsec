@@ -115,6 +115,8 @@ Del, arrows, A–Z, 0–9, F1–F12, Ctrl, Shift, Alt and Win. Modifiers apply w
 held, allowing multi-touch chords. Editing, profile switches and key replacement
 release existing input. Native views have identities that change with the key
 code, so a relabeled control cannot silently continue sending its old key.
+The stream's raw-touch overlay filters touches by their originating view; holding
+a quick key must not count as a second finger for cursor/scroll/pinch gestures.
 Dragging updates the preview immediately and persists when the gesture ends,
 the orientation changes, editing closes or the app resigns active.
 
@@ -134,6 +136,8 @@ add arrows and Ctrl then hold Ctrl+C using two controls; delete a held key only
 after entering editing and confirm input is released. Customize both profiles,
 switch repeatedly, rotate, restart and reconnect. Inspect actual stream settings
 after profile changes and test brief recovery followed by another network loss.
+Hold S while moving a finger on the stream; confirm normal cursor movement and
+no accidental pinch/scroll. Also check two actual stream fingers still pinch.
 
 An Xcode build, model regression checks and physical-device checks are separate
 acceptance steps. CI does not establish touch behavior or real network recovery.

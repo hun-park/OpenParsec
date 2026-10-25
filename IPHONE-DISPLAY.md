@@ -27,6 +27,23 @@ On Windows, Xcode/iOS compilation is unavailable. Editing an existing IPA's Info
 
 ## Device acceptance checks
 
+### Windows keyboard accessory (build 20261025.1)
+
+Esc is pinned at the left of the accessory bar and remains visible when its
+other keys are scrolled. The row uses Ctrl, Alt, Shift, Win and Tab labels in
+place of Mac symbols. Win still sends the existing LGUI key code (227); Esc
+sends the existing escape key code (41). Modifier buttons stay held until
+tapped again, and the existing keyboard-dismiss/background release handling
+is retained. F1–F12, Del and arrows remain available by horizontal scrolling.
+The system iOS letter keyboard is unchanged.
+
+After installation, verify Esc closes a Windows menu/game menu, Win opens
+Start, Ctrl+C/Ctrl+V and Alt+Tab work, and modifiers release when the keyboard
+is hidden. Scroll the row to its end and rotate the phone with the keyboard
+open; Esc should remain reachable, including when the pan handle is shown.
+
+### Display
+
 1. With rotation lock off, terminate the app, hold the phone upright, launch, and verify landscape.
 2. Rotate to portrait, landscape left and landscape right. Background/resume in portrait; it should remain portrait.
 3. Under Settings → Video, verify Auto resolution reports 2622 × 1206 on iPhone 17; connect and inspect the actual stream resolution in the overlay.

@@ -81,6 +81,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	private var panHandle: UIImageView?
 	private var keyScrollView: UIScrollView?
 	private var keyBarDone: UIButton?
+	private var keyBarEscape: UIButton?
 	private var panStartOffset: CGPoint = .zero
 	private var keyboardCoversPicture = false
 	var onKeyboardVisibilityChanged: ((Bool) -> Void)?
@@ -610,8 +611,10 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 		guard let handle = panHandle, let keys = keyScrollView, let bar = keys.superview else { return }
 		let inset = bar.safeAreaInsets
 		handle.frame.origin.x = 4 + inset.left
-		let left = (handle.isHidden ? 8 : 48) + inset.left
-		keys.frame = CGRect(x: left, y: 0, width: bar.bounds.width - 72 - left - inset.right, height: 44)
+		let escapeLeft = (handle.isHidden ? 8 : 48) + inset.left
+		keyBarEscape?.frame = CGRect(x: escapeLeft, y: 0, width: 44, height: 44)
+		let left = escapeLeft + 52
+		keys.frame = CGRect(x: left, y: 0, width: max(0, bar.bounds.width - 72 - left - inset.right), height: 44)
 		keyBarDone?.frame.origin.x = bar.bounds.width - 70 - inset.right
 	}
 
@@ -1351,7 +1354,9 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
 
 		let scrollView = UIScrollView(frame: CGRect(x: 8, y: 0, width: toolbarBackground.bounds.width - 80, height: 44))
 		scrollView.autoresizingMask = [.flexibleWidth]
-		scrollView.showsHorizontalScrollIndicator = false
+		scrollView.showsHorizontalScrollIndicator = true
+		scrollView.accessibilityLabel = "Windows keyboard shortcuts"
+		scrollView.accessibilityHint = "Swipe horizontally for function and arrow keys"
 
 		let buttonStackView = UIStackView()
 		buttonStackView.axis = .horizontal
@@ -1360,12 +1365,13 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
 		buttonStackView.spacing = 8
 		buttonStackView.translatesAutoresizingMaskIntoConstraints = false
 
-		let shiftBarButton = createKeyboardButton(displayText: "⇧", keyText: "SHIFT", isToggleable: true)
-		let windowsBarButton = createKeyboardButton(displayText: "⌘", keyText: "LGUI", isToggleable: true)
-		let tabBarButton = createKeyboardButton(displayText: "⇥", keyText: "TAB", isToggleable: false)
-		let escapeBarButton = createKeyboardButton(displayText: "⎋", keyText: "UIKeyInputEscape", isToggleable: false)
-		let controlBarButton = createKeyboardButton(displayText: "⌃", keyText: "CONTROL", isToggleable: true)
-		let altBarButton = createKeyboardButton(displayText: "⌥", keyText: "LALT", isToggleable: true)
+		let shiftBarButton = createKeyboardButton(displayText: "Shift", keyText: "SHIFT", isToggleable: true)
+		let windowsBarButton = createKeyboardButton(displayText: "Win", keyText: "LGUI", isToggleable: true)
+		let tabBarButton = createKeyboardButton(displayText: "Tab", keyText: "TAB", isToggleable: false)
+		// Esc stays outside the scrolling row, even after scrolling to F12 or the arrows.
+		let escapeBarButton = createKeyboardButton(displayText: "Esc", keyText: "UIKeyInputEscape", isToggleable: false)
+		let controlBarButton = createKeyboardButton(displayText: "Ctrl", keyText: "CONTROL", isToggleable: true)
+		let altBarButton = createKeyboardButton(displayText: "Alt", keyText: "LALT", isToggleable: true)
 		let deleteBarButton = createKeyboardButton(displayText: "Del", keyText: "DELETE", isToggleable: false)
 		let f1Button = createKeyboardButton(displayText: "F1", keyText: "F1", isToggleable: false)
 		let f2Button = createKeyboardButton(displayText: "F2", keyText: "F2", isToggleable: false)
@@ -1384,10 +1390,14 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
 		let leftButton = createKeyboardButton(displayText: "←", keyText: "LEFT", isToggleable: false)
 		let rightButton = createKeyboardButton(displayText: "→", keyText: "RIGHT", isToggleable: false)
 
-		let buttons = [tabBarButton, shiftBarButton, controlBarButton, altBarButton, windowsBarButton, escapeBarButton, f1Button, f2Button, f3Button, f4Button, f5Button, f6Button, f7Button, f8Button, f9Button, f10Button, f11Button, f12Button, deleteBarButton, upButton, downButton, leftButton, rightButton]
+		let buttons = [controlBarButton, altBarButton, shiftBarButton, windowsBarButton, tabBarButton, f1Button, f2Button, f3Button, f4Button, f5Button, f6Button, f7Button, f8Button, f9Button, f10Button, f11Button, f12Button, deleteBarButton, upButton, downButton, leftButton, rightButton]
 
 		for button in buttons {
 			buttonStackView.addArrangedSubview(button)
+			NSLayoutConstraint.activate([
+				button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+				button.heightAnchor.constraint(equalToConstant: 44)
+			])
 		}
 
 		scrollView.addSubview(buttonStackView)
@@ -1423,9 +1433,11 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
 		panHandle = handle
 		keyScrollView = scrollView
 		keyBarDone = doneButton
+		keyBarEscape = escapeBarButton
 		containerView.onLayout = { [weak self] in self?.layoutKeyBar() }
 
 		toolbarBackground.addSubview(scrollView)
+		toolbarBackground.addSubview(escapeBarButton)
 		toolbarBackground.addSubview(handle)
 		toolbarBackground.addSubview(doneButton)
 
@@ -1440,8 +1452,13 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
 
 		// Set the image and button properties
 		button.setTitle(displayText, for: .normal)
-		button.titleLabel?.font = .systemFont(ofSize: 10)
-		button.frame = CGRect(x: 0, y: 0, width: 36, height: 36)
+		button.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+		button.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+		button.accessibilityIdentifier = "keyboard.\(keyText)"
+		button.accessibilityLabel = keyText == "UIKeyInputEscape" ? "Escape" : displayText
+		if isToggleable {
+			button.accessibilityHint = "Tap to hold this modifier, tap again to release"
+		}
 		button.titleLabel?.frame = CGRect(x: 0, y: 0, width: 30, height: 30)
 		if let label = button.titleLabel {
 			label.textAlignment = .center

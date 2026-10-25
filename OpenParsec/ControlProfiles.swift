@@ -137,6 +137,8 @@ struct ControlProfilePersistence {
 		lastSaved = archive
 		return data
 	}
+}
+
 // A short PARSEC_OK interval must not refill an outage's retry budget.
 struct ReconnectRecovery {
 	var attempts = 0

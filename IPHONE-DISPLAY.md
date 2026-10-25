@@ -42,6 +42,21 @@ Start, Ctrl+C/Ctrl+V and Alt+Tab work, and modifiers release when the keyboard
 is hidden. Scroll the row to its end and rotate the phone with the keyboard
 open; Esc should remain reachable, including when the pan handle is shown.
 
+### Persistent right-side keys (build 20261025.2)
+
+Esc, S and Space are available on the right edge of the stream independently
+of the iOS keyboard and the Hide Buttons setting. Each 68 × 48 point button
+sends key-down on contact and key-up on release/cancel/drag-out, so keys can
+also be held. S uses HID code 22 without synthesizing Shift. Buttons release
+when removed, disabled or the app resigns active, and reset their visual state
+after the existing global input release. Reconnection/error/host-blocked states
+disable the controls.
+
+On the phone, test all three with the keyboard hidden, hold/release S and Space,
+slide off a pressed button, use multiple buttons, rotate, background/resume,
+and disconnect/reconnect while holding a key. Confirm a button press does not
+move the remote mouse. These physical-device checks are still required.
+
 ### Display
 
 1. With rotation lock off, terminate the app, hold the phone upright, launch, and verify landscape.

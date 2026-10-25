@@ -239,6 +239,12 @@ struct ParsecView: View {
 
 			ParsecStatusBar(showMenu: $showMenu, showDCAlert: $showDCAlert, DCAlertText: $DCAlertText, parsecViewController: parsecViewController, isReconnecting: $isReconnecting, connectionLost: $connectionLost, onSilentDisconnect: { disconnect() })
 
+			QuickKeysOverlay(enabled: !isReconnecting && !connectionLost && !showDCAlert && !dataModel.isBlocked)
+				.frame(width: 68, height: 164)
+				.padding(.trailing, 12)
+				.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+				.zIndex(4)
+
 			if isReconnecting || connectionLost {
 				VStack(spacing: 12) {
 					ActivityIndicator(isAnimating: .constant(true), style: .large, tint: .white)

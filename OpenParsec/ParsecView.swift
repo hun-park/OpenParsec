@@ -274,6 +274,10 @@ struct ParsecView: View {
 					Button(quickControls.active.title, action: switchControlProfile)
 						.accessibilityLabel("현재 \(quickControls.active.title) 프로필, 눌러 전환")
 						.disabled(isReconnecting || connectionLost || showDCAlert)
+					Button(action: { settingsStore.windowsHardwareKeyboard.toggle() }) {
+						Text(settingsStore.windowsHardwareKeyboard ? "키보드: Win" : "키보드: 기본")
+					}
+					.accessibilityLabel("Windows 외장 키보드 모드 \(settingsStore.windowsHardwareKeyboard ? "켜짐" : "꺼짐"), 눌러 전환")
 					Button(action: toggleStreamPreset) {
 						Label(presetTitle, systemImage: activePreset == "responsive" ? "bolt.fill" : "sparkles")
 					}
@@ -379,6 +383,7 @@ struct ParsecView: View {
 				}
 				if showMenu {
 					HStack {
+						ScrollView(.vertical) {
 						VStack(spacing: 3) {
 							Button(action: disableOverlay) {
 								Text("Hide Buttons")
@@ -391,6 +396,9 @@ struct ParsecView: View {
 									.padding(8)
 									.frame(maxWidth: .infinity)
 									.multilineTextAlignment(.center)
+							}
+							Button(action: { parsecViewController.sendHangulToggle() }) {
+								Text("PC 한/영 전환").padding(8).frame(maxWidth: .infinity)
 							}
 							Menu {
 								ForEach(resolutions, id: \.self) { resolution in
@@ -437,6 +445,10 @@ struct ParsecView: View {
 									.frame(maxWidth: .infinity)
 									.multilineTextAlignment(.center)
 							}
+							Button(action: cycleDisplay) {
+								Label("다음 디스플레이", systemImage: "arrow.triangle.2.circlepath")
+									.padding(8).frame(maxWidth: .infinity)
+							}.disabled(!canCycleDisplays)
 							if DataManager.model.displayConfigs.count > 1 {
 								Menu {
 									Button("Auto") {
@@ -479,6 +491,7 @@ struct ParsecView: View {
 									.multilineTextAlignment(.center)
 							}
 						}
+						}
 						.background(Rectangle().fill(Color("BackgroundPrompt").opacity(0.75)))
 						.foregroundColor(Color("Foreground"))
 						.frame(maxWidth: 230)
@@ -517,6 +530,7 @@ struct ParsecView: View {
 			}
 		}
 		.onAppear(perform: post)
+		.onChange(of: hardwareInputSuspended) { suspended in parsecViewController.remoteKeyboardSuspended = suspended }
 		.onDisappear { quickControls.captureStream() }
 		.onChange(of: settingsStore.resolution) { _ in quickControls.captureStream() }
 		.onChange(of: settingsStore.bitrate) { _ in quickControls.captureStream() }
@@ -540,6 +554,7 @@ struct ParsecView: View {
 	}
 
 	func post() {
+		parsecViewController.remoteKeyboardSuspended = hardwareInputSuspended
 		ParsecBackgroundManager.shared.onShouldDisconnect = {
 			NotificationCenter.default.post(name: NSNotification.Name("ParsecBackgroundDisconnect"), object: nil)
 		}
@@ -703,6 +718,10 @@ struct ParsecView: View {
 		}
 	}
 
+	private var hardwareInputSuspended: Bool {
+		editingQuickKeys || showMenu || showDCAlert || isReconnecting || connectionLost || dataModel.isBlocked
+	}
+
 	private func switchControlProfile() {
 		parsecViewController.resetKeyState()
 		CParsec.sendReleaseMessage()
@@ -802,11 +821,20 @@ struct ParsecView: View {
 		}
 	}
 
+	private var canCycleDisplays: Bool {
+		let ids = Set(dataModel.displayConfigs.map(\.id).filter { !$0.isEmpty && $0 != "none" })
+		return ids.count > 1 && !isReconnecting && !connectionLost && !showDCAlert && !dataModel.isBlocked
+	}
+
+	private func cycleDisplay() {
+		guard canCycleDisplays,
+		      let next = DisplayCycle.next(ids: dataModel.displayConfigs.map(\.id), current: dataModel.output) else { return }
+		changeDisplay(displayId: next)
+	}
+
 	func changeDisplay(displayId: String) {
-		DispatchQueue.main.async {
-			DataManager.model.output = displayId
-			CParsec.updateHostVideoConfig()
-		}
+		DataManager.model.output = displayId
+		CParsec.updateHostVideoConfig()
 	}
 
 	static func getHostUserData() {

@@ -141,3 +141,61 @@ no accidental pinch/scroll. Also check two actual stream fingers still pinch.
 
 An Xcode build, model regression checks and physical-device checks are separate
 acceptance steps. CI does not establish touch behavior or real network recovery.
+
+### Optional Windows hardware keyboard mode (build 20261025.6)
+
+Enable `Windows 외장 키보드` under Settings > Keyboard, or tap `키보드: 기본`
+in the streaming toolbar to change it to `키보드: Win`. The saved switch is
+device-wide and defaults off; disabling it restores the existing UIKit/Option
+as Command behavior. Control sends Windows Ctrl, Option sends Alt, Command
+sends Win, with left/right variants retained. This mode takes priority over
+Option as Command without discarding that setting.
+
+GCKeyboard receives physical HID transitions on the main queue while this
+stream is visible, active, healthy and not covered by editing/menu/error UI.
+UIKit is the fallback for absent GC keyboards or unsupported usages; supported
+usages are not sent by both paths. The fallback also reconciles Control/Shift/
+Option/Command flags when separate modifier transitions are missing. A zero-
+height input view keeps hardware keyboard focus with the software keyboard
+hidden. Reconnect/release, background, keyboard disconnect, suspension and mode
+changes clear held state and key-repeat timers.
+
+`Caps Lock → 한/영` defaults on within Windows mode and maps Caps Lock to HID
+LANG1 (144), the existing Hangul mapping. Dedicated LANG1 stays LANG1. Disable
+that secondary switch to retain Caps Lock. Mapping changes retain the original
+key-down code until release; language keys never auto-repeat. The quick-key
+editor now offers `한/영`, and the stream menu offers `PC 한/영 전환` as a
+screen fallback. This switches the PC IME, not the iPad input source. Windows
+must have Korean input available. The photographed A-marked key is assumed to
+emit Caps Lock; device testing must establish its actual HID usage.
+
+This feature does not change iPadOS keyboard settings or claim to intercept
+all system shortcuts. Fn/Globe or shortcuts consumed by the OS may not reach
+the app. If Caps Lock switches the iPad input source instead of the remote PC,
+test the iPad hardware-keyboard language-switch setting and use the on-screen
+Hangul fallback while checking actual delivery.
+
+Device checks: mode on/off in-session and after restart; Ctrl+A/C/V, Option+Tab,
+Shift+letters, Cmd opening Windows Start, arrows/Enter/Backspace, repeat,
+Caps Lock and the explicit Hangul button in Windows Notepad. Verify each
+language press toggles once. Disconnect the keyboard, background, reconnect,
+or toggle mode while holding Control/Option and confirm no stuck remote keys.
+Also check software keyboard input and no duplicate letters with GC attached.
+`Control+Space → 한/영` is a second independently saved switch, default on within
+Windows mode. A plain Control+Space chord pulses LANG1 once with Ctrl temporarily
+released/restored on the host, consumes Space and never repeats the language
+toggle while held. Caps Lock remains the primary choice; Control+Shift+Space and
+other modified chords retain ordinary key behavior. iPadOS can still consume a
+system shortcut before the app receives it, so actual delivery needs testing.
+
+The left stream menu also has `다음 디스플레이` (circular arrows). It cycles valid
+unique host monitor IDs in adapter order and wraps to the first; the button is
+disabled with fewer than two outputs or an unavailable/blocked session. The
+initial host-reported output seeds selection, and optimistic changes apply
+immediately so consecutive taps advance instead of reusing a stale selection.
+The existing display selection submenu remains. The menu now scrolls to keep
+all actions reachable on short landscape windows. Test 1→2→3→1, a single monitor,
+unknown/removed displays, rapid taps and reconnect on the actual Windows host.
+
+CI covers mapping/state transitions and display cycling, not the pictured
+keyboard, iPadOS routing or multi-monitor streaming on the device.

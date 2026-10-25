@@ -321,6 +321,11 @@ class ParsecSDKBridge: ParsecService {
 						DataManager.model.resolutionY = cfg.resolutionY
 						DataManager.model.bitrate = cfg.encoderMaxBitrate
 						DataManager.model.constantFps = cfg.fullFPS
+						// Seed the actual starting monitor for next-display cycling;
+						// do not overwrite a newer optimistic selection with an old reply.
+						if DataManager.model.output == "none", !cfg.output.isEmpty, cfg.output != "none" {
+							DataManager.model.output = cfg.output
+						}
 					}
 					if !self.didSetResolution {
 						self.didSetResolution = true
@@ -572,7 +577,8 @@ class ParsecSDKBridge: ParsecService {
 		keyboardMessagePress.type = MESSAGE_KEYBOARD
 		keyboardMessagePress.keyboard.code = ParsecKeycode(keyCode)
 		keyboardMessagePress.keyboard.pressed = pressed
-		keyboardMessagePress.keyboard.mod = capsLock ? MOD_CAPS : MOD_NONE
+		let suppressLocalCaps = SettingsHandler.windowsHardwareKeyboard && SettingsHandler.hardwareCapsToHangul
+		keyboardMessagePress.keyboard.mod = capsLock && !suppressLocalCaps ? MOD_CAPS : MOD_NONE
 		ParsecClientSendMessage(_parsec, &keyboardMessagePress)
 	}
 	

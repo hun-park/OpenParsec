@@ -3,6 +3,7 @@ import UIKit
 import ParsecSDK
 import QuartzCore
 import os
+import GameController
 
 protocol ParsecPlayground {
 	init(viewController: UIViewController, updateImage: @escaping () -> Void)
@@ -335,6 +336,10 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 			name: UIApplication.willResignActiveNotification,
 			object: nil
 		)
+		for name in [NSNotification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect,
+		             NSNotification.Name("HardwareKeyboardModeChanged"), UIApplication.didBecomeActiveNotification] {
+			NotificationCenter.default.addObserver(self, selector: #selector(configureHardwareKeyboard), name: name, object: nil)
+		}
 
 	}
 
@@ -379,6 +384,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 
 	override func viewDidAppear(_ animated: Bool) {
 		super.viewDidAppear(animated)
+		hardwareStreamVisible = true
 		UIApplication.shared.isIdleTimerDisabled = true
 		if let parent = parent {
 			parent.setChildForHomeIndicatorAutoHidden(self)
@@ -387,11 +393,16 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 		if keyboardVisible {
 			becomeFirstResponder()
 		}
+		configureHardwareKeyboard()
 		// (Pinch-to-zoom is driven manually via touchOverlay; the scroll view's pinch stays off.)
 	}
 
 	override func viewWillDisappear(_ animated: Bool) {
 		super.viewWillDisappear(animated)
+		hardwareStreamVisible = false
+		physicalKeyboard?.keyboardInput?.keyChangedHandler = nil
+		physicalKeyboard = nil
+		resetKeyState()
 		UIApplication.shared.isIdleTimerDisabled = false
 		stopMomentum()
 		if let parent = parent {
@@ -408,8 +419,91 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	private var repeatKeyCode: Int = -1
 	private var optCmdRemapActive = false
 	private var altKeyHeld = false
+	private var windowsKeyState = WindowsHardwareKeyState()
+	private var physicalKeyboard: GCKeyboard?
+	private var hardwareStreamVisible = false
+	private lazy var hardwareOnlyInputView = UIView(frame: .zero)
+	var remoteKeyboardSuspended = false {
+		didSet {
+			if remoteKeyboardSuspended && !oldValue {
+				resetKeyState()
+				CParsec.sendReleaseMessage()
+			}
+		}
+	}
+
+	private var canForwardHardwareKeys: Bool {
+		guard SettingsHandler.windowsHardwareKeyboard, hardwareStreamVisible, !remoteKeyboardSuspended,
+		      viewIfLoaded?.window != nil, UIApplication.shared.applicationState == .active,
+		      ParsecBackgroundManager.shared.hasActiveConnection, !DataManager.model.isBlocked else { return false }
+		var status = ParsecClientStatus()
+		return CParsec.getStatusEx(&status) == PARSEC_OK && !status.networkFailure
+	}
+
+	@objc func configureHardwareKeyboard() {
+		physicalKeyboard?.keyboardInput?.keyChangedHandler = nil
+		physicalKeyboard = nil
+		resetKeyState()
+		guard hardwareStreamVisible, viewIfLoaded?.window != nil else { return }
+		CParsec.sendReleaseMessage()
+		if SettingsHandler.windowsHardwareKeyboard {
+			physicalKeyboard = GCKeyboard.coalesced
+			physicalKeyboard?.handlerQueue = .main
+			physicalKeyboard?.keyboardInput?.keyChangedHandler = { [weak self] _, _, code, pressed in
+				MainActor.assumeIsolated {
+					guard let self = self, self.canForwardHardwareKeys else { return }
+					self.forwardHardwareKey(UInt32(clamping: code.rawValue), pressed: pressed)
+				}
+			}
+			reloadInputViews()
+			becomeFirstResponder()
+		} else {
+			reloadInputViews()
+			if !keyboardVisible { resignFirstResponder() }
+		}
+	}
+
+	private func sendHardwarePackets(_ packets: [HardwareKeyPacket]) {
+		for packet in packets { CParsec.sendKeyboardMessage(keyCode: packet.code, pressed: packet.pressed) }
+	}
+	private func forwardHardwareKey(_ raw: UInt32, pressed: Bool) {
+		let oldCode = windowsKeyState.held[raw]
+		let packets = windowsKeyState.transition(raw: raw, pressed: pressed, capsToHangul: SettingsHandler.hardwareCapsToHangul,
+			controlSpaceToHangul: SettingsHandler.hardwareControlSpaceToHangul)
+		sendHardwarePackets(packets)
+		if pressed, let packet = packets.first, packet.pressed, WindowsHardwareKeyState.repeats(packet.code) {
+			startKeyRepeat(keyCode: Int(packet.code))
+		} else if !pressed, let oldCode = oldCode, Int(oldCode) == repeatKeyCode { stopKeyRepeat() }
+	}
+
+	private func handleWindowsPresses(_ presses: Set<UIPress>, pressed: Bool) {
+		guard canForwardHardwareKeys else { return }
+		for press in presses {
+			guard let key = press.key else { continue }
+			let raw = UInt32(key.keyCode.rawValue)
+			// GC owns supported physical usages, UIKit handles only absent devices or
+			// unsupported usages. Never send the same physical event down both paths.
+			if physicalKeyboard?.keyboardInput?.button(forKeyCode: GCKeyCode(rawValue: Int(raw))) != nil { continue }
+			if physicalKeyboard == nil, !(224...231).contains(raw) {
+				var modifiers = Set<UInt32>()
+				if key.modifierFlags.contains(.control) { modifiers.insert(224) }
+				if key.modifierFlags.contains(.shift) { modifiers.insert(225) }
+				if key.modifierFlags.contains(.alternate) { modifiers.insert(226) }
+				if key.modifierFlags.contains(.command) { modifiers.insert(227) }
+				sendHardwarePackets(windowsKeyState.reconcileModifiers(modifiers))
+			}
+			forwardHardwareKey(raw, pressed: pressed)
+		}
+	}
+
+	func sendHangulToggle() {
+		guard ParsecBackgroundManager.shared.hasActiveConnection else { return }
+		CParsec.sendKeyboardMessage(keyCode: 144, pressed: true)
+		CParsec.sendKeyboardMessage(keyCode: 144, pressed: false)
+	}
 
 	override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+		if SettingsHandler.windowsHardwareKeyboard { handleWindowsPresses(presses, pressed: true); return }
 		for press in presses {
 			guard let key = press.key else { continue }
 
@@ -439,6 +533,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	}
 
 	override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+		if SettingsHandler.windowsHardwareKeyboard { handleWindowsPresses(presses, pressed: false); return }
 		for press in presses {
 			guard let key = press.key else { continue }
 
@@ -503,6 +598,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 
 	func resetKeyState() {
 		stopKeyRepeat()
+		windowsKeyState.reset()
 		optCmdRemapActive = false
 		altKeyHeld = false
 	}
@@ -1284,6 +1380,9 @@ class KeyboardButton: UIButton {
 
 // MARK: - Virtual Keyboard
 extension ParsecViewController: UIKeyInput, UITextInputTraits {
+	override var inputView: UIView? {
+		SettingsHandler.windowsHardwareKeyboard && !keyboardVisible ? hardwareOnlyInputView : nil
+	}
 	var hasText: Bool {
 		return true
 	}
@@ -1337,6 +1436,7 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
 
     // copied from moonlight https://github.com/moonlight-stream/moonlight-ios/blob/022352c1667788d8626b659d984a290aa5c25e17/Limelight/Input/StreamView.m#L393
 	override var inputAccessoryView: UIView? {
+		if SettingsHandler.windowsHardwareKeyboard && !keyboardVisible { return nil }
 
 		if let keyboardAccessoriesView {
 			return keyboardAccessoriesView
@@ -1475,6 +1575,7 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
 	}
 
 	@objc private func inputWasReleased() {
+		resetKeyState()
 		clearToolbarModifiers(sendToHost: false)
 	}
 
@@ -1534,6 +1635,14 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
     // 4. Do NOT simplify this to a synchronous call, or it will fail in some race conditions.
 	func setKeyboardVisible(_ visible: Bool) {
 		keyboardVisible = visible
+		if SettingsHandler.windowsHardwareKeyboard {
+			DispatchQueue.main.async { [weak self] in
+				guard let self = self, self.hardwareStreamVisible else { return }
+				self.reloadInputViews()
+				self.becomeFirstResponder()
+			}
+			return
+		}
 		if visible {
             DispatchQueue.main.async {
                 self.reloadInputViews()

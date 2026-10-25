@@ -94,6 +94,18 @@ struct SettingsView: View {
 							CatItem("Option Key as Command") {
 								Toggle("", isOn: $settings.optionAsCommand)
 									.frame(width: 80)
+									.disabled(settings.windowsHardwareKeyboard)
+							}
+							CatItem("Windows 외장 키보드") {
+								Toggle("", isOn: $settings.windowsHardwareKeyboard).frame(width: 80)
+							}
+							CatItem("Caps Lock → 한/영") {
+								Toggle("", isOn: $settings.hardwareCapsToHangul).frame(width: 80)
+									.disabled(!settings.windowsHardwareKeyboard)
+							}
+							CatItem("Control+Space → 한/영") {
+								Toggle("", isOn: $settings.hardwareControlSpaceToHangul).frame(width: 80)
+									.disabled(!settings.windowsHardwareKeyboard)
 							}
 						}
 						CatTitle("Video")

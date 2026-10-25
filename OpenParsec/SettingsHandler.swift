@@ -17,6 +17,9 @@ final class SettingsStore: ObservableObject {
 			"cursorScale": 0.5,
 			"mouseSensitivity": 1.0,
 			"optionAsCommand": false,
+			"windowsHardwareKeyboard": false,
+			"hardwareCapsToHangul": true,
+			"hardwareControlSpaceToHangul": true,
 			"menuSwipeEdge": MenuSwipeEdge.off.rawValue,
 			"noOverlay": false,
 			"hideStatusBar": true,
@@ -98,6 +101,29 @@ final class SettingsStore: ObservableObject {
 	var optionAsCommand: Bool {
 		get { defaults.bool(forKey: "optionAsCommand") }
 		set { store(newValue, "optionAsCommand") }
+	}
+
+	var windowsHardwareKeyboard: Bool {
+		get { defaults.bool(forKey: "windowsHardwareKeyboard") }
+		set {
+			store(newValue, "windowsHardwareKeyboard")
+			NotificationCenter.default.post(name: NSNotification.Name("HardwareKeyboardModeChanged"), object: nil)
+		}
+	}
+	var hardwareCapsToHangul: Bool {
+		get { defaults.bool(forKey: "hardwareCapsToHangul") }
+		set {
+			store(newValue, "hardwareCapsToHangul")
+			NotificationCenter.default.post(name: NSNotification.Name("HardwareKeyboardModeChanged"), object: nil)
+		}
+	}
+
+	var hardwareControlSpaceToHangul: Bool {
+		get { defaults.bool(forKey: "hardwareControlSpaceToHangul") }
+		set {
+			store(newValue, "hardwareControlSpaceToHangul")
+			NotificationCenter.default.post(name: NSNotification.Name("HardwareKeyboardModeChanged"), object: nil)
+		}
 	}
 
 	var menuSwipeEdge: MenuSwipeEdge {
@@ -182,6 +208,9 @@ final class SettingsStore: ObservableObject {
 }
 
 struct SettingsHandler {
+	static var windowsHardwareKeyboard: Bool { get { SettingsStore.shared.windowsHardwareKeyboard } set { SettingsStore.shared.windowsHardwareKeyboard = newValue } }
+	static var hardwareCapsToHangul: Bool { get { SettingsStore.shared.hardwareCapsToHangul } set { SettingsStore.shared.hardwareCapsToHangul = newValue } }
+	static var hardwareControlSpaceToHangul: Bool { get { SettingsStore.shared.hardwareControlSpaceToHangul } set { SettingsStore.shared.hardwareControlSpaceToHangul = newValue } }
 	static var renderer: RendererType { get { SettingsStore.shared.renderer } set { SettingsStore.shared.renderer = newValue } }
 	static var resolution: ParsecResolution { get { SettingsStore.shared.resolution } set { SettingsStore.shared.resolution = newValue } }
 	static var bitrate: Int { get { SettingsStore.shared.bitrate } set { SettingsStore.shared.bitrate = newValue } }

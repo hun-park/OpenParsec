@@ -12,6 +12,7 @@ struct QuickKeyChoice: Identifiable {
 		var keys: [QuickKeyChoice] = [
 		.init(id: 41, title: "Esc"), .init(id: 44, title: "Space"),
 		.init(id: 40, title: "Enter"), .init(id: 43, title: "Tab"),
+		.init(id: 144, title: "한/영"),
 		.init(id: 42, title: "Backspace"), .init(id: 76, title: "Del"),
 		.init(id: 82, title: "↑"), .init(id: 81, title: "↓"),
 		.init(id: 80, title: "←"), .init(id: 79, title: "→"),
@@ -134,5 +135,67 @@ struct ReconnectRecovery {
 	mutating func noteHealthy(at now: TimeInterval) {
 		if healthySince == nil { healthySince = now }
 		if let start = healthySince, now - start >= 5 { attempts = 0 }
+	}
+}
+
+struct HardwareKeyPacket: Equatable {
+	var code: UInt32
+	var pressed: Bool
+}
+
+// Same HID usages on iPad and Windows for Ctrl/Option/Command. Store the
+// key-down mapping so a setting change cannot orphan a different key on key-up.
+struct WindowsHardwareKeyState {
+	private(set) var held: [UInt32: UInt32] = [:]
+	static func mappedCode(_ raw: UInt32, capsToHangul: Bool) -> UInt32? {
+		guard (4...231).contains(raw) else { return nil }
+		return raw == 57 && capsToHangul ? 144 : raw
+	}
+	mutating func transition(raw: UInt32, pressed: Bool, capsToHangul: Bool, controlSpaceToHangul: Bool = false) -> [HardwareKeyPacket] {
+		if pressed {
+			guard held[raw] == nil, let code = Self.mappedCode(raw, capsToHangul: capsToHangul) else { return [] }
+			let controls = held.keys.filter { $0 == 224 || $0 == 228 }.sorted()
+			if raw == 44, controlSpaceToHangul, !controls.isEmpty,
+			   held.keys.allSatisfy({ $0 == 224 || $0 == 228 }) {
+				// Consume Space until key-up. Pulse Hangul with Ctrl released on the
+				// host, then restore physically held Ctrl keys in deterministic order.
+				held[raw] = 0
+				return controls.map { .init(code: $0, pressed: false) }
+					+ [.init(code: 144, pressed: true), .init(code: 144, pressed: false)]
+					+ controls.map { .init(code: $0, pressed: true) }
+			}
+			held[raw] = code
+			// A dedicated LANG1 and remapped Caps Lock can share one host key.
+			return held.filter { $0.value == code }.count == 1 ? [.init(code: code, pressed: true)] : []
+		}
+		guard let code = held.removeValue(forKey: raw), code != 0, !held.values.contains(code) else { return [] }
+		return [.init(code: code, pressed: false)]
+	}
+	mutating func reconcileModifiers(_ activeLeftCodes: Set<UInt32>) -> [HardwareKeyPacket] {
+		var output: [HardwareKeyPacket] = []
+		for left in [UInt32(224), 225, 226, 227] {
+			let right = left + 4
+			if activeLeftCodes.contains(left) {
+				if held[left] == nil && held[right] == nil {
+					output += transition(raw: left, pressed: true, capsToHangul: false)
+				}
+			} else {
+				output += transition(raw: left, pressed: false, capsToHangul: false)
+				output += transition(raw: right, pressed: false, capsToHangul: false)
+			}
+		}
+		return output
+	}
+	mutating func reset() { held.removeAll() }
+	static func repeats(_ code: UInt32) -> Bool { code < 224 && code != 57 && code != 144 && code != 145 }
+}
+
+enum DisplayCycle {
+	static func next(ids: [String], current: String) -> String? {
+		var seen = Set<String>()
+		let outputs = ids.filter { !$0.isEmpty && $0 != "none" && seen.insert($0).inserted }
+		guard !outputs.isEmpty else { return nil }
+		guard let index = outputs.firstIndex(of: current) else { return outputs.first }
+		return outputs[(index + 1) % outputs.count]
 	}
 }

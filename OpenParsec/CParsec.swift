@@ -6,6 +6,7 @@ import GLKit
 enum ParsecResolution: String, CaseIterable, Hashable {
 	case host = "Host Resolution"
 	case client = "Client Resolution" // updated dynamically during connection
+	case responsive = "Responsive (Device Aspect)"
 	case r3840x2160_16_9 = "3840x2160 (16:9)"
 	case r3840x1600_21_9 = "3840x1600 (21:9)"
 	case r3440x1440_21_9 = "3440x1440 (21:9)"
@@ -30,6 +31,8 @@ enum ParsecResolution: String, CaseIterable, Hashable {
 			return 0
 		case .client:
 			return ParsecResolution.clientSize.width
+		case .responsive:
+			return Self.responsiveSize.width
 		case .r3840x2160_16_9:
 			return 3840
 		case .r3840x1600_21_9:
@@ -69,6 +72,8 @@ enum ParsecResolution: String, CaseIterable, Hashable {
 			return 0
 		case .client:
 			return ParsecResolution.clientSize.height
+		case .responsive:
+			return Self.responsiveSize.height
 		case .r3840x2160_16_9:
 			return 2160
 		case .r3840x1600_21_9:
@@ -114,6 +119,12 @@ enum ParsecResolution: String, CaseIterable, Hashable {
 	}
 
 	static var bitrates = [3, 5, 7, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+
+	private static var responsiveSize: (width: Int, height: Int) {
+		let scale = min(1.0, 1600.0 / Double(max(clientSize.width, clientSize.height)))
+		return (max(2, Int(Double(clientSize.width) * scale) / 2 * 2),
+		        max(2, Int(Double(clientSize.height) * scale) / 2 * 2))
+	}
 
 	static func updateClientResolution(width: Int, height: Int) {
 		guard width > 0, height > 0 else { return }

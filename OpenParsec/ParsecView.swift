@@ -13,6 +13,7 @@ struct ParsecStatusBar: View {
 	@State var networkFailureSince: Date?
 	@State var parsecViewController: ParsecViewController?
 	@State var wasDisconnected: Bool = true
+	@State private var didEnterBackground = false
 	let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 	let onSilentDisconnect: () -> Void
 
@@ -47,10 +48,22 @@ struct ParsecStatusBar: View {
 			.onReceive(timer) { _ in
 				poll()
 			}
+			.onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+				didEnterBackground = true
+			}
+			.onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+				guard didEnterBackground else { return }
+				didEnterBackground = false
+				guard SettingsHandler.autoReconnect, !showDCAlert else { return }
+				// A fresh retry budget for this foreground return. Poll owns all SDK
+				// reconnect calls, so notification + timer cannot start two attempts.
+				ParsecBackgroundManager.shared.reconnectAttempts = 0
+				ParsecBackgroundManager.shared.resumedAt = Date()
+			}
 	}
 
 	func poll() {
-		if showDCAlert || ParsecBackgroundManager.shared.isPaused {
+		if showDCAlert || ParsecBackgroundManager.shared.isPaused || UIApplication.shared.applicationState != .active {
 			return
 		}
 
@@ -197,6 +210,8 @@ struct ParsecView: View {
 	@State var preferH265: Bool = true
 	@State var isReconnecting: Bool = false
 	@State var connectionLost: Bool = false
+	@State private var editingQuickKeys = false
+	@AppStorage("streamQuickPreset") private var streamPreset = ""
 
 	@State var resolutions: [ParsecResolution]
 	@State var bitrates: [Int]
@@ -239,11 +254,30 @@ struct ParsecView: View {
 
 			ParsecStatusBar(showMenu: $showMenu, showDCAlert: $showDCAlert, DCAlertText: $DCAlertText, parsecViewController: parsecViewController, isReconnecting: $isReconnecting, connectionLost: $connectionLost, onSilentDisconnect: { disconnect() })
 
-			QuickKeysOverlay(enabled: !isReconnecting && !connectionLost && !showDCAlert && !dataModel.isBlocked)
-				.frame(width: 68, height: 164)
-				.padding(.trailing, 12)
-				.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+			CustomQuickControls(enabled: !isReconnecting && !connectionLost && !showDCAlert && !dataModel.isBlocked,
+			                   editing: $editingQuickKeys)
+				.ignoresSafeArea(.keyboard)
 				.zIndex(4)
+
+			if !editingQuickKeys {
+				HStack(spacing: 8) {
+					Button(action: toggleStreamPreset) {
+						Label(presetTitle, systemImage: streamPreset == "responsive" ? "bolt.fill" : "sparkles")
+					}
+					.disabled(isReconnecting || connectionLost || showDCAlert)
+					Button(action: { editingQuickKeys = true; showMenu = false }) {
+						Image(systemName: "slider.horizontal.3")
+					}.accessibilityLabel("버튼 배치 편집")
+				}
+				.font(.system(size: 13, weight: .semibold))
+				.padding(12)
+				.foregroundColor(.white)
+				.background(Color.black.opacity(0.65))
+				.cornerRadius(10)
+				.padding(10)
+				.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+				.zIndex(5)
+			}
 
 			if isReconnecting || connectionLost {
 				VStack(spacing: 12) {
@@ -463,6 +497,7 @@ struct ParsecView: View {
 				  secondaryButton: .cancel(Text("Close"), action: {disconnect()}))
 		}
 		.onChange(of: isReconnecting) { reconnecting in
+			if reconnecting { editingQuickKeys = false }
 			if !reconnecting {
 				CParsec.setMuted(muted)
 				if muted { CParsec.pause(video: false, audio: true) }
@@ -645,7 +680,30 @@ struct ParsecView: View {
 		}
 	}
 
+	private var presetTitle: String {
+		streamPreset == "responsive" ? "반응 우선" : streamPreset == "quality" ? "화질 우선" : "화질 / 반응"
+	}
+
+	private func toggleStreamPreset() {
+		let responsive = streamPreset != "responsive"
+		streamPreset = responsive ? "responsive" : "quality"
+		if let window = parsecViewController.view.window { ParsecResolution.updateClientResolution(for: window) }
+		let resolution: ParsecResolution = responsive ? .responsive : .client
+		SettingsHandler.resolution = resolution
+		SettingsHandler.bitrate = responsive ? 8 : 25
+		SettingsHandler.constantFps = true
+		DataManager.model.resolutionX = resolution.width
+		DataManager.model.resolutionY = resolution.height
+		DataManager.model.bitrate = SettingsHandler.bitrate
+		DataManager.model.constantFps = true
+		CParsec.updateHostVideoConfig()
+		if UserDefaults.standard.object(forKey: "quickKeyHaptics") as? Bool != false {
+			UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.45)
+		}
+	}
+
 	func changeResolution(res: ParsecResolution) {
+		streamPreset = ""
         SettingsHandler.resolution = res
 		DispatchQueue.main.async {
 			DataManager.model.resolutionX = res.width
@@ -655,6 +713,7 @@ struct ParsecView: View {
 	}
 
 	func changeBitRate(bitrate: Int) {
+		streamPreset = ""
 		SettingsHandler.bitrate = bitrate
 		applyBitrate()
 	}
@@ -667,6 +726,7 @@ struct ParsecView: View {
 	}
 
 	func toggleConstantFps() {
+		streamPreset = ""
 		DispatchQueue.main.async {
 			DataManager.model.constantFps.toggle()
 			CParsec.updateHostVideoConfig()

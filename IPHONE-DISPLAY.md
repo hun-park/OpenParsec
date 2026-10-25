@@ -66,4 +66,37 @@ move the remote mouse. These physical-device checks are still required.
 5. Verify the entire desktop is visible in both orientations, menus avoid the camera/home indicator, and touch coordinates match the cursor. Test edge protection both on and off.
 6. Test keyboard, pinch zoom, reconnect, and iPad orientation/multitasking for regressions.
 
-An Xcode build and all physical-device checks remain required before calling this change verified.
+### Quick controls and foreground recovery (build 20261025.4)
+
+- The sliders icon at the top right opens button editing. Drag each Esc/S/Space
+  button, select it in the segmented picker, and adjust its size (44–88 points)
+  and opacity (25–100%). Changes save immediately in UserDefaults; portrait and
+  landscape have separate layouts. Reset affects only the current orientation.
+  Editing sends no key presses and releases existing input. Normal controls
+  retain native press/hold/release, cancellation, accessibility, and multi-touch.
+- The adjacent button switches between responsive and quality presets. Responsive
+  caps the longest edge at 1600 pixels, preserves device aspect with even encoder
+  dimensions, and requests 8 Mbps. Quality requests native device resolution and
+  25 Mbps. Both request constant frame rate. Existing frame-rate and codec choices
+  stay as selected. Presets persist through reconnects; manual stream changes
+  clear the preset label. These are requests, not measured latency guarantees.
+- Light local haptics on key-down and preset switches default on and can be
+  disabled in the editor. They acknowledge the local touch, not host delivery.
+- Returning from background replenishes the reconnect retry budget and checks
+  stream status through the existing single polling owner. No SDK reconnect calls
+  run while inactive or paused. Temporary failures use the existing bounded
+  three-attempt retry/backoff and visible reconnect overlay; permanent auth or
+  permission errors keep their normal error handling. The auto-reconnect setting
+  is respected. A healthy resumed session is not forcibly disconnected.
+
+Device acceptance: move/resize/fade each key in both orientations, restart and
+reconnect to check persistence, open/close the keyboard, and confirm transparent
+gaps still control the remote cursor. Hold S+Space together, leave the app while
+holding, and check no stuck input. Turn haptics off/on. Toggle both stream presets
+and inspect actual resolution/bitrate after host negotiation and reconnect. Test
+home/app switching, lock/unlock, brief network loss, longer Wi-Fi loss, unavailable
+host, cancellation, auto-reconnect disabled, and PiP. The host must support the
+requested display modes and be reachable; iOS cannot recover a session while
+the app is terminated or the PC is offline.
+
+An Xcode build and physical-device checks are separate acceptance steps.

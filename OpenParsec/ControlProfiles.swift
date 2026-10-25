@@ -147,13 +147,21 @@ struct HardwareKeyPacket: Equatable {
 // key-down mapping so a setting change cannot orphan a different key on key-up.
 struct WindowsHardwareKeyState {
 	private(set) var held: [UInt32: UInt32] = [:]
-	static func mappedCode(_ raw: UInt32, capsToHangul: Bool) -> UInt32? {
+	static func mappedCode(_ raw: UInt32, capsToHangul: Bool, escapeAsOption: Bool = false) -> UInt32? {
 		guard (4...231).contains(raw) else { return nil }
+		if raw == 41 && escapeAsOption { return 226 }
 		return raw == 57 && capsToHangul ? 144 : raw
 	}
 	mutating func transition(raw: UInt32, pressed: Bool, capsToHangul: Bool, controlSpaceToHangul: Bool = false) -> [HardwareKeyPacket] {
 		if pressed {
 			guard held[raw] == nil, let code = Self.mappedCode(raw, capsToHangul: capsToHangul) else { return [] }
+			if code == 144 {
+				// Match the working screen button: never leave LANG1 held while
+				// waiting for a delayed or missing Bluetooth Caps Lock key-up.
+				let languageAlreadyHeld = held.keys.contains { $0 == 144 || ($0 == 57 && capsToHangul) }
+				held[raw] = 0
+				return languageAlreadyHeld ? [] : [.init(code: 144, pressed: true), .init(code: 144, pressed: false)]
+			}
 			let controls = held.keys.filter { ($0 == 224 || $0 == 228) && held[$0] == $0 }.sorted()
 			if raw == 44, controlSpaceToHangul, controlSpaceReady {
 				// Consume Space until key-up. Pulse Hangul with Ctrl released on the

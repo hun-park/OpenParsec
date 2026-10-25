@@ -18,6 +18,7 @@ final class SettingsStore: ObservableObject {
 			"mouseSensitivity": 1.0,
 			"optionAsCommand": false,
 			"windowsHardwareKeyboard": false,
+			"hardwareEscapeAsOption": true,
 			"hardwareCapsToHangul": true,
 			"hardwareControlSpaceToHangul": true,
 			"menuSwipeEdge": MenuSwipeEdge.off.rawValue,
@@ -107,6 +108,13 @@ final class SettingsStore: ObservableObject {
 		get { defaults.bool(forKey: "windowsHardwareKeyboard") }
 		set {
 			store(newValue, "windowsHardwareKeyboard")
+			NotificationCenter.default.post(name: NSNotification.Name("HardwareKeyboardModeChanged"), object: nil)
+		}
+	}
+	var hardwareEscapeAsOption: Bool {
+		get { defaults.bool(forKey: "hardwareEscapeAsOption") }
+		set {
+			store(newValue, "hardwareEscapeAsOption")
 			NotificationCenter.default.post(name: NSNotification.Name("HardwareKeyboardModeChanged"), object: nil)
 		}
 	}
@@ -210,6 +218,7 @@ final class SettingsStore: ObservableObject {
 struct SettingsHandler {
 	static var windowsHardwareKeyboard: Bool { get { SettingsStore.shared.windowsHardwareKeyboard } set { SettingsStore.shared.windowsHardwareKeyboard = newValue } }
 	static var hardwareCapsToHangul: Bool { get { SettingsStore.shared.hardwareCapsToHangul } set { SettingsStore.shared.hardwareCapsToHangul = newValue } }
+	static var hardwareEscapeAsOption: Bool { get { SettingsStore.shared.hardwareEscapeAsOption } set { SettingsStore.shared.hardwareEscapeAsOption = newValue } }
 	static var hardwareControlSpaceToHangul: Bool { get { SettingsStore.shared.hardwareControlSpaceToHangul } set { SettingsStore.shared.hardwareControlSpaceToHangul = newValue } }
 	static var renderer: RendererType { get { SettingsStore.shared.renderer } set { SettingsStore.shared.renderer = newValue } }
 	static var resolution: ParsecResolution { get { SettingsStore.shared.resolution } set { SettingsStore.shared.resolution = newValue } }

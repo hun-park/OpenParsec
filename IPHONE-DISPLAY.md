@@ -248,3 +248,23 @@ Related primary-source report on delayed Bluetooth language modifiers:
 https://github.com/hugeBlack/OpenParsec/pull/102 . This repair's dual-source mux
 and diagnostics are specific to this fork; that report does not validate this
 user's hardware or our IPA.
+
+### Reported keyboard compatibility and button placement (20261026.2)
+
+Device report: UIKit HID 41 for Option, 224 for Control (working), and 57
+for Caps/Hangul. Add a persistent Windows-mode-only HID 41 -> Alt switch,
+enabled by default for this custom build. It also remaps physical Escape;
+disable it for a normal keyboard. On-screen Escape is unaffected. Hold the
+compatibility Alt across UIKit letter events that lack the alternate flag,
+and clear it on release, mode changes, disconnect/background resets.
+
+Caps/LANG1 now sends a complete LANG1 down/up tap immediately, matching the
+user-confirmed screen button, rather than holding the host language key until
+a physical key-up. Repeats and mirrored native sources remain deduplicated.
+This addresses delayed release as a possible cause; device success is pending.
+Diagnostics show the latest outgoing numeric packet batch separately from input.
+
+Move the next-display control out of the menu and directly below the left
+keyboard toggle as a 48pt cycle icon with a screen caption. Manual display
+selection and Control+Option+M remain. Regression tests/CI do not establish
+that this keyboard's Option or Caps behavior is fixed on the physical iPad.

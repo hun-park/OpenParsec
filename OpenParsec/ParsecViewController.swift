@@ -422,6 +422,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	private var altKeyHeld = false
 	private var windowsKeyState = WindowsHardwareKeyState()
 	private var hardwareInputMux = HardwareInputMux()
+	private var compatibilityOptionHeld = false
 	private var hardwareShortcutGate = HardwareShortcutGate()
 	var onCycleDisplay: (() -> Void)?
 	private var physicalKeyboard: GCKeyboard?
@@ -471,7 +472,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	}
 
 	private func sendHardwarePackets(_ packets: [HardwareKeyPacket]) {
-		HardwareKeyboardDiagnostics.shared.forwarded(packets.count)
+		HardwareKeyboardDiagnostics.shared.forwarded(packets)
 		for packet in packets { CParsec.sendKeyboardMessage(keyCode: packet.code, pressed: packet.pressed) }
 	}
 	override var keyCommands: [UIKeyCommand]? {
@@ -516,8 +517,11 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	private func receiveHardwareKey(_ raw: UInt32, pressed: Bool, source: HardwareKeySource) {
 		let allowed = canForwardHardwareKeys
 		HardwareKeyboardDiagnostics.shared.received(source: source, code: raw, pressed: pressed, allowed: allowed)
-		guard allowed, let routed = WindowsHardwareKeyState.mappedCode(raw, capsToHangul: SettingsHandler.hardwareCapsToHangul),
+		guard allowed, let routed = WindowsHardwareKeyState.mappedCode(raw, capsToHangul: SettingsHandler.hardwareCapsToHangul,
+			escapeAsOption: SettingsHandler.hardwareEscapeAsOption),
 		      hardwareInputMux.accept(code: routed, pressed: pressed, source: source, at: ProcessInfo.processInfo.systemUptime) else { return }
+		if raw == 41 && SettingsHandler.hardwareEscapeAsOption { compatibilityOptionHeld = pressed }
+		if routed == 226 && !pressed { compatibilityOptionHeld = false }
 		forwardHardwareKey(routed, pressed: pressed)
 	}
 	private func forwardHardwareKey(_ raw: UInt32, pressed: Bool) {
@@ -548,16 +552,21 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 	private func handleWindowsPresses(_ presses: Set<UIPress>, pressed: Bool) {
 		// Modifier downs must precede letters when UIKit batches an entire chord.
 		let keys = presses.compactMap(\.key).sorted {
-			let left = isModifierKey($0.keyCode), right = isModifierKey($1.keyCode)
+			let left = isModifierKey($0.keyCode) || (SettingsHandler.hardwareEscapeAsOption && $0.keyCode.rawValue == 41)
+			let right = isModifierKey($1.keyCode) || (SettingsHandler.hardwareEscapeAsOption && $1.keyCode.rawValue == 41)
 			return left != right ? left : $0.keyCode.rawValue < $1.keyCode.rawValue
 		}
 		for key in keys {
 			let raw = UInt32(key.keyCode.rawValue)
 			let allowed = canForwardHardwareKeys
 			HardwareKeyboardDiagnostics.shared.received(source: .uiKit, code: raw, pressed: pressed, allowed: allowed)
-			guard allowed else { continue }
-			if !(224...231).contains(raw) {
+			guard allowed, let routed = WindowsHardwareKeyState.mappedCode(raw, capsToHangul: SettingsHandler.hardwareCapsToHangul,
+				escapeAsOption: SettingsHandler.hardwareEscapeAsOption) else { continue }
+			if !(224...231).contains(routed) {
 				var modifiers = Set<UInt32>()
+				// HID 41 has no UIKit .alternate flag. Preserve the physical hold
+				// across Tab/letter events until its matching release is accepted.
+				if compatibilityOptionHeld { modifiers.insert(226) }
 				if key.modifierFlags.contains(.control) { modifiers.insert(224) }
 				if key.modifierFlags.contains(.shift) { modifiers.insert(225) }
 				if key.modifierFlags.contains(.alternate) { modifiers.insert(226) }
@@ -571,8 +580,9 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 				}
 				sendHardwarePackets(windowsKeyState.reconcileModifiers(modifiers))
 			}
-			guard let routed = WindowsHardwareKeyState.mappedCode(raw, capsToHangul: SettingsHandler.hardwareCapsToHangul),
-			      hardwareInputMux.accept(code: routed, pressed: pressed, source: .uiKit, at: ProcessInfo.processInfo.systemUptime) else { continue }
+			guard hardwareInputMux.accept(code: routed, pressed: pressed, source: .uiKit, at: ProcessInfo.processInfo.systemUptime) else { continue }
+			if raw == 41 && SettingsHandler.hardwareEscapeAsOption { compatibilityOptionHeld = pressed }
+			if routed == 226 && !pressed { compatibilityOptionHeld = false }
 			forwardHardwareKey(routed, pressed: pressed)
 		}
 	}
@@ -681,6 +691,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 		stopKeyRepeat()
 		windowsKeyState.reset()
 		hardwareInputMux.reset()
+		compatibilityOptionHeld = false
 		hardwareShortcutGate.reset()
 		optCmdRemapActive = false
 		altKeyHeld = false
@@ -1776,11 +1787,12 @@ class TouchOverlayView: UIView {
 final class HardwareKeyboardDiagnostics: ObservableObject {
 	static let shared = HardwareKeyboardDiagnostics()
 	@Published var enabled = false {
-		didSet { gcCount = 0; uiCount = 0; outgoing = 0; blocked = 0; detail = "키를 눌러 주세요"; refresh() }
+		didSet { gcCount = 0; uiCount = 0; outgoing = 0; blocked = 0; detail = "키를 눌러 주세요"; sentDetail = ""; refresh() }
 	}
 	@Published private(set) var summary = "키를 눌러 주세요"
 	private var gcCount = 0, uiCount = 0, outgoing = 0, blocked = 0
 	private var detail = "키를 눌러 주세요"
+	private var sentDetail = ""
 	private var updatePending = false
 	func received(source: HardwareKeySource, code: UInt32, pressed: Bool, allowed: Bool) {
 		guard enabled else { return }
@@ -1789,9 +1801,10 @@ final class HardwareKeyboardDiagnostics: ObservableObject {
 		detail = "\(source == .gameController ? "GC" : "UIKit") HID \(code) \(pressed ? "↓" : "↑")\(allowed ? "" : " · 입력 일시 중지")"
 		scheduleRefresh()
 	}
-	func forwarded(_ count: Int) {
-		guard enabled, count > 0 else { return }
-		outgoing += count
+	func forwarded(_ packets: [HardwareKeyPacket]) {
+		guard enabled, !packets.isEmpty else { return }
+		outgoing += packets.count
+		sentDetail = "요청 HID " + packets.map { "\($0.code)\($0.pressed ? "↓" : "↑")" }.joined(separator: " ")
 		scheduleRefresh()
 	}
 	func command(_ name: String) {
@@ -1809,7 +1822,7 @@ final class HardwareKeyboardDiagnostics: ObservableObject {
 		}
 	}
 	private func refresh() {
-		summary = enabled ? "수신 GC \(gcCount) / UIKit \(uiCount)\n전송 요청 \(outgoing) · 차단 \(blocked)\n\(detail)" : ""
+		summary = enabled ? "수신 GC \(gcCount) / UIKit \(uiCount)\n전송 요청 \(outgoing) · 차단 \(blocked)\n\(detail)\n\(sentDetail)" : ""
 	}
 }
 

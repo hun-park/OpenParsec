@@ -103,6 +103,12 @@ struct SettingsView: View {
 								Toggle("", isOn: $settings.hardwareCapsToHangul).frame(width: 80)
 									.disabled(!settings.windowsHardwareKeyboard)
 							}
+							CatItem("호환 Option (HID 41 → Alt)") {
+								Toggle("", isOn: $settings.hardwareEscapeAsOption).frame(width: 80)
+									.disabled(!settings.windowsHardwareKeyboard)
+							}
+							Text("Option이 HID 41로 수신되는 키보드용입니다. 켜면 물리 Esc도 Alt로 전달됩니다. 화면 Esc는 그대로 사용할 수 있습니다.")
+								.font(.caption).padding(8)
 							CatItem("Control+Space → 한/영") {
 								Toggle("", isOn: $settings.hardwareControlSpaceToHangul).frame(width: 80)
 									.disabled(!settings.windowsHardwareKeyboard)

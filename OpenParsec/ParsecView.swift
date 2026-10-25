@@ -381,6 +381,23 @@ struct ParsecView: View {
 						.padding(.leading)
 						Spacer()
 					}
+					HStack {
+						Button(action: cycleDisplay) {
+							VStack(spacing: 2) {
+								Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 22))
+								Text("화면").font(.system(size: 10))
+							}
+							.frame(width: 48, height: 48)
+							.foregroundColor(Color("Foreground"))
+							.background(Color("BackgroundPrompt").opacity(0.5))
+							.cornerRadius(8)
+						}
+						.disabled(!canCycleDisplays)
+						.opacity(canCycleDisplays ? 1 : 0.4)
+						.accessibilityLabel("다음 디스플레이")
+						.padding(.leading)
+						Spacer()
+					}
 				}
 				if showMenu {
 					HStack {
@@ -455,12 +472,6 @@ struct ParsecView: View {
 									.frame(maxWidth: .infinity)
 									.multilineTextAlignment(.center)
 							}
-							Button(action: cycleDisplay) {
-								VStack(spacing: 2) {
-									Label("다음 디스플레이", systemImage: "arrow.triangle.2.circlepath")
-									Text("Ctrl+Alt+M").font(.caption)
-								}.padding(8).frame(maxWidth: .infinity)
-							}.disabled(!canCycleDisplays)
 							if DataManager.model.displayConfigs.count > 1 {
 								Menu {
 									Button("Auto") {

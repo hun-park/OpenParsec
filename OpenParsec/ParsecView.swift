@@ -262,7 +262,7 @@ struct ParsecView: View {
 			if !editingQuickKeys {
 				HStack(spacing: 8) {
 					Button(action: toggleStreamPreset) {
-						Label(presetTitle, systemImage: streamPreset == "responsive" ? "bolt.fill" : "sparkles")
+						Label(presetTitle, systemImage: activePreset == "responsive" ? "bolt.fill" : "sparkles")
 					}
 					.disabled(isReconnecting || connectionLost || showDCAlert)
 					Button(action: { editingQuickKeys = true; showMenu = false }) {
@@ -680,12 +680,19 @@ struct ParsecView: View {
 		}
 	}
 
+	private var activePreset: String {
+		guard settingsStore.constantFps else { return "" }
+		if streamPreset == "responsive", settingsStore.resolution == .responsive, settingsStore.bitrate == 8 { return "responsive" }
+		if streamPreset == "quality", settingsStore.resolution == .client, settingsStore.bitrate == 25 { return "quality" }
+		return ""
+	}
+
 	private var presetTitle: String {
-		streamPreset == "responsive" ? "반응 우선" : streamPreset == "quality" ? "화질 우선" : "화질 / 반응"
+		activePreset == "responsive" ? "반응 우선" : activePreset == "quality" ? "화질 우선" : "화질 / 반응"
 	}
 
 	private func toggleStreamPreset() {
-		let responsive = streamPreset != "responsive"
+		let responsive = activePreset != "responsive"
 		streamPreset = responsive ? "responsive" : "quality"
 		if let window = parsecViewController.view.window { ParsecResolution.updateClientResolution(for: window) }
 		let resolution: ParsecResolution = responsive ? .responsive : .client

@@ -83,13 +83,22 @@ class ParsecBackgroundManager {
 	func sceneDidBecomeActive() {
 		// Takes priority over isPiPActive check because stopPiP() is async
 		if didDisconnectDueToBackground, let peerId = lastPeerId {
-			guard SettingsHandler.autoReconnect else { return }
+			guard SettingsHandler.autoReconnect else {
+				didDisconnectDueToBackground = false
+				isReconnecting = false
+				return
+			}
 			didDisconnectDueToBackground = false
 			isReconnecting = true
 
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-				guard let self = self, self.isReconnecting,
-				      SettingsHandler.autoReconnect, UIApplication.shared.applicationState == .active else { return }
+				guard let self = self, self.isReconnecting else { return }
+				guard SettingsHandler.autoReconnect else { self.isReconnecting = false; return }
+				guard UIApplication.shared.applicationState == .active else {
+					self.isReconnecting = false
+					self.didDisconnectDueToBackground = true
+					return
+				}
 				self.onShouldReconnect?(peerId)
 			}
 		}

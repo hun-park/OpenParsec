@@ -1,8 +1,8 @@
 # iPhone display customization
 
-This is a source modification, not an installed or device-tested IPA.
+This customization is built into an IPA; physical-device testing is still required.
 
-- iPhone launches in landscape. The app delegate allows portrait and both landscape orientations after launch; iOS 16+ also receives one initial landscape geometry request. Returning from the background does not repeat that request. System rotation lock and OS geometry restrictions still apply.
+- iPhone launches in landscape. The app delegate allows portrait and both landscape orientations after launch. On iOS 16+, the actual interface orientation is saved before interruption and requested once on return, preserving portrait or either landscape direction. Cold launch still starts in landscape. System rotation lock and OS geometry restrictions still apply.
 - Auto resolution uses the connected iPhone screen's native landscape pixels, independent of Display Zoom and initial view layout. iPhone 17 requests 2622 × 1206. Rotating the phone changes local layout, without repeatedly rotating the PC desktop.
 - The first launch of this customization selects Auto resolution and resets saved zoom on iPhone. Subsequent manual choices are retained.
 - “Avoid Camera / Home Indicator” defaults to on for iPhone. Video and controls respect the safe area. Turn it off for edge-to-edge presentation. Aspect-fit rendering is retained, so the full PC image is visible; differing aspect ratios produce black margins.
@@ -60,7 +60,7 @@ move the remote mouse. These physical-device checks are still required.
 ### Display
 
 1. With rotation lock off, terminate the app, hold the phone upright, launch, and verify landscape.
-2. Rotate to portrait, landscape left and landscape right. Background/resume in portrait; it should remain portrait.
+2. Rotate to portrait, landscape left and landscape right. In each orientation, switch to a different app/home screen, rotate the phone while away, and return; the UI should restore the orientation used before leaving. After return, rotate normally to verify rotation remains free. Also test Control Center, lock/unlock and a complete app restart (which should start landscape).
 3. Under Settings → Video, verify Auto resolution reports 2622 × 1206 on iPhone 17; connect and inspect the actual stream resolution in the overlay.
 4. The PC must support the requested resolution. Parsec can choose a nearby mode or reject the request if it does not. No display driver, custom PC resolution, or host setting was changed by this patch.
 5. Verify the entire desktop is visible in both orientations, menus avoid the camera/home indicator, and touch coordinates match the cursor. Test edge protection both on and off.

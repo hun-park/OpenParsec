@@ -4,6 +4,7 @@ import SwiftUI
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 	var window: UIWindow?
 	private var requestedInitialLandscape = false
+	private var orientationBeforeInterruption: UIInterfaceOrientation?
 
 	func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
 		if connectionOptions.shortcutItem?.type == ParsecBackgroundManager.reconnectShortcut {
@@ -40,16 +41,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 	private var pendingUnpause: DispatchWorkItem?
 
 	func sceneDidBecomeActive(_ scene: UIScene) {
-		if !requestedInitialLandscape, let windowScene = scene as? UIWindowScene,
-		   windowScene.traitCollection.userInterfaceIdiom == .phone {
-			requestedInitialLandscape = true
-			// A single request, not an orientation lock. Resuming never forces rotation.
-			if #available(iOS 16.0, *) {
-				windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { error in
-					appNote("[display] initial landscape request: \(error.localizedDescription)")
-				}
-			}
-		}
+		if let windowScene = scene as? UIWindowScene { restorePhoneOrientation(in: windowScene) }
 		if #available(iOS 15.0, *) {
 			PictureInPictureManager.shared.stopPiP()
 			if PictureInPictureManager.shared.stopFramePump() {
@@ -73,6 +65,16 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 	}
 
 	func sceneWillResignActive(_ scene: UIScene) {
+		// Capture before UIKit can adopt the orientation of the home screen or another app.
+		if let windowScene = scene as? UIWindowScene,
+		   windowScene.traitCollection.userInterfaceIdiom == .phone {
+			switch windowScene.interfaceOrientation {
+			case .portrait, .landscapeLeft, .landscapeRight:
+				orientationBeforeInterruption = windowScene.interfaceOrientation
+			default:
+				break
+			}
+		}
 		if ParsecBackgroundManager.shared.hasActiveConnection {
 			CParsec.sendReleaseMessage()
 		}
@@ -80,6 +82,30 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 	}
 
 	func sceneWillEnterForeground(_ scene: UIScene) {
+	}
+
+	private func restorePhoneOrientation(in scene: UIWindowScene) {
+		guard scene.traitCollection.userInterfaceIdiom == .phone else { return }
+		let target: UIInterfaceOrientationMask
+		if !requestedInitialLandscape {
+			requestedInitialLandscape = true
+			target = .landscapeRight
+		} else {
+			switch orientationBeforeInterruption {
+			case .portrait?: target = .portrait
+			case .landscapeLeft?: target = .landscapeLeft
+			case .landscapeRight?: target = .landscapeRight
+			default: return
+			}
+		}
+		orientationBeforeInterruption = nil
+		// One request on activation; the normal supported orientations remain unrestricted.
+		// Read the interface orientation, not UIDevice.orientation, to preserve the actual UI.
+		if #available(iOS 16.0, *) {
+			scene.requestGeometryUpdate(.iOS(interfaceOrientations: target)) { error in
+				appNote("[display] restore orientation request: \(error.localizedDescription)")
+			}
+		}
 	}
 
 	func sceneDidEnterBackground(_ scene: UIScene) {
